@@ -2,6 +2,7 @@ import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createDemoApp } from '@pocketsre/demo-service/app';
+import { createDeterministicDiagnosis, validateDiagnosis } from '@pocketsre/incident-engine';
 import { createGatewayApp } from './app.js';
 
 const closeables: Array<{ close(): Promise<unknown> }> = [];
@@ -19,12 +20,17 @@ describe('gateway', () => {
     const gateway = createGatewayApp({ demoServiceUrl: `http://127.0.0.1:${address.port}` });
     closeables.push(gateway);
 
+    expect((await demo.inject({ method: 'POST', url: '/checkout' })).statusCode).toBe(200);
     await gateway.inject({ method: 'POST', url: '/v1/demo/break' });
+    expect((await demo.inject({ method: 'POST', url: '/checkout' })).statusCode).toBe(500);
     const incidentResponse = await gateway.inject({ method: 'GET', url: '/v1/incidents/current' });
     const incident = incidentResponse.json();
 
     expect(incident.serviceHealth.status).toBe('degraded');
     expect(incident.evidence).toHaveLength(6);
+    const diagnosis = createDeterministicDiagnosis(incident);
+    expect(validateDiagnosis(diagnosis, incident).success).toBe(true);
+    expect(diagnosis.proposedAction?.type).toBe('TRIGGER_ROLLBACK_WORKFLOW');
 
     const actionResponse = await gateway.inject({
       method: 'POST',
@@ -36,7 +42,7 @@ describe('gateway', () => {
         serviceId: 'checkout-api',
         action: 'TRIGGER_ROLLBACK_WORKFLOW',
         target: 'checkout-api',
-        parameters: { targetRelease: 'rel-2026.09.1' },
+        parameters: diagnosis.proposedAction!.parameters,
         approvedAt: new Date().toISOString(),
       },
     });
@@ -48,6 +54,8 @@ describe('gateway', () => {
 
     const servicesResponse = await gateway.inject({ method: 'GET', url: '/v1/services' });
     expect(servicesResponse.json().services[0].status).toBe('healthy');
+    expect((await demo.inject({ method: 'POST', url: '/checkout' })).statusCode).toBe(200);
+    expect(createDeterministicDiagnosis(after).proposedAction).toBeNull();
   });
 
   it('rejects an unapproved action type', async () => {
