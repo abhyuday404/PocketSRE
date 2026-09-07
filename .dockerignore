@@ -1,0 +1,17 @@
+.git
+**/node_modules
+**/dist
+**/.turbo
+**/.expo
+**/coverage
+**/.env
+**/.env.*
+**/*.gguf
+**/*.keystore
+**/*.jks
+**/*.log
+**/.pocketsre-data
+apps/mobile/android
+apps/mobile/ios
+incident*.json
+investigation*.json

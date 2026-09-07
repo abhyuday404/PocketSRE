@@ -25,7 +25,7 @@ Operational APIs -> gateway -> sanitized incident bundle -> phone
 ## Local AI modes
 
 - **Llama mode:** `llama.rn` loads a GGUF model and requests schema-shaped JSON.
-- **Organizer runtime:** replace the adapter with the supplied Snapdragon NPU API.
+- **Organizer runtime (planned):** an adapter can replace GGUF inference once the organizer's runtime is available; this integration is not implemented.
 - **Deterministic mode:** the shared incident engine supplies an evidence-backed fallback for development, automated tests, and live-demo resilience.
 
 Deterministic mode is clearly labelled in the UI and must not be presented as model inference.
