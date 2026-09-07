@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "PocketSRE",
+    "slug": "pocketsre",
+    "version": "0.1.0",
+    "platforms": ["android"],
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "android": {
+      "package": "dev.pocketsre.mobile",
+      "permissions": ["INTERNET", "POST_NOTIFICATIONS"],
+      "adaptiveIcon": {
+        "backgroundColor": "#07110e"
+      }
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "llama.rn",
+        {
+          "forceCxx20": true,
+          "enableOpenCLAndHexagon": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26,
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "supportsOfflineTriage": true
+    }
+  }
+}

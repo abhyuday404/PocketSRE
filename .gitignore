@@ -1,0 +1,15 @@
+node_modules/
+.turbo/
+dist/
+coverage/
+.expo/
+.env
+.env.*
+!.env.example
+*.log
+*.gguf
+*.keystore
+*.jks
+apps/mobile/android/
+apps/mobile/ios/
+.DS_Store

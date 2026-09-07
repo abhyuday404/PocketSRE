@@ -1,0 +1,27 @@
+services:
+  demo-service:
+    image: node:22-alpine
+    working_dir: /workspace
+    command: corepack pnpm --filter @pocketsre/demo-service dev
+    volumes:
+      - .:/workspace
+    ports:
+      - '4200:4200'
+    environment:
+      DEMO_SERVICE_HOST: 0.0.0.0
+      DEMO_SERVICE_PORT: 4200
+
+  gateway:
+    image: node:22-alpine
+    working_dir: /workspace
+    command: corepack pnpm --filter @pocketsre/gateway dev
+    volumes:
+      - .:/workspace
+    ports:
+      - '4100:4100'
+    environment:
+      GATEWAY_HOST: 0.0.0.0
+      GATEWAY_PORT: 4100
+      DEMO_SERVICE_URL: http://demo-service:4200
+    depends_on:
+      - demo-service

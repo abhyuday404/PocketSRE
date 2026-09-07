@@ -1,0 +1,27 @@
+{
+  "name": "pocketsre",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "dev:backend": "turbo run dev --filter=@pocketsre/gateway --filter=@pocketsre/demo-service",
+    "dev:mobile": "pnpm --filter @pocketsre/contracts build && pnpm --filter @pocketsre/incident-engine build && pnpm --filter @pocketsre/mobile start",
+    "investigator": "pnpm --filter @pocketsre/investigator-cli dev --",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "prettier": "3.9.6",
+    "turbo": "2.10.12",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}

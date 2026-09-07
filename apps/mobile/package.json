@@ -1,0 +1,34 @@
+{
+  "name": "@pocketsre/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "android": "expo run:android",
+    "build": "expo export --platform android",
+    "dev": "expo start --dev-client",
+    "start": "expo start --dev-client",
+    "test": "vitest run src --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pocketsre/contracts": "workspace:*",
+    "@pocketsre/incident-engine": "workspace:*",
+    "expo": "57.0.19",
+    "expo-build-properties": "57.0.16",
+    "expo-dev-client": "57.0.18",
+    "expo-linear-gradient": "57.0.1",
+    "expo-secure-store": "57.0.3",
+    "expo-status-bar": "57.0.1",
+    "llama.rn": "0.12.9",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "5.9.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "babel-preset-expo": "57.0.10",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
