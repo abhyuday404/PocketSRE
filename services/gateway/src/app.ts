@@ -1,130 +1,192 @@
-import cors from '@fastify/cors';
+import { timingSafeEqual, randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import {
   ApprovedActionRequestSchema,
-  EvidenceEventSchema,
-  ServiceHealthSchema,
+  ActionResultSchema,
+  IncidentBundleSchema,
   type IncidentBundle,
+  type AuditEntry,
 } from '@pocketsre/contracts';
-import { sanitizeBundle } from '@pocketsre/incident-engine';
+import { getRollbackTarget, sanitizeBundle } from '@pocketsre/incident-engine';
+import { AuditStore } from './audit.js';
 
-type GatewayOptions = {
+export type GatewayOptions = {
   demoServiceUrl?: string;
+  accessToken?: string;
+  auditPath?: string;
+  loadBundle?: () => Promise<IncidentBundle>;
 };
 
-function incidentFromHealth(health: ReturnType<typeof ServiceHealthSchema.parse>) {
-  const current = new Date().toISOString();
-  const isHealthy = health.status === 'healthy';
-  return {
-    id: isHealthy ? 'inc-checkout-resolved' : 'inc-checkout-500s',
-    serviceId: health.serviceId,
-    title: isHealthy ? 'Checkout API operating normally' : 'Checkout requests are failing',
-    severity: isHealthy ? ('info' as const) : ('critical' as const),
-    status: isHealthy ? ('resolved' as const) : ('open' as const),
-    startedAt: isHealthy ? current : new Date(Date.now() - 180_000).toISOString(),
-    lastUpdatedAt: current,
-  };
-}
-
 export function createGatewayApp(options: GatewayOptions = {}) {
-  const app = Fastify({ logger: false });
-  const demoServiceUrl =
-    options.demoServiceUrl ?? process.env.DEMO_SERVICE_URL ?? 'http://127.0.0.1:4200';
-
-  app.register(cors, { origin: true });
+  const app = Fastify({ logger: false, bodyLimit: 32_768 });
+  const demoServiceUrl = options.demoServiceUrl ?? 'http://127.0.0.1:4200';
+  const audit = new AuditStore(options.auditPath);
+  let executing = false;
+  app.addHook('onReady', async () => audit.load());
+  app.addHook('onRequest', async (request, reply) => {
+    if (!options.accessToken || request.url === '/health') return;
+    const supplied = Buffer.from(request.headers.authorization ?? '');
+    const expected = Buffer.from(`Bearer ${options.accessToken}`);
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      return reply.code(401).send({
+        error: 'unauthorized',
+        message: 'Configure the gateway access token in Connections.',
+      });
+    }
+  });
 
   async function requestDemo(path: string, init?: RequestInit): Promise<unknown> {
     const response = await fetch(`${demoServiceUrl}${path}`, {
       ...init,
+      signal: AbortSignal.timeout(8_000),
+      redirect: 'error',
       headers: { 'content-type': 'application/json', ...init?.headers },
     });
-    const payload: unknown = await response.json();
-    if (!response.ok) {
-      throw new Error(`Demo service returned ${response.status}: ${JSON.stringify(payload)}`);
-    }
-    return payload;
+    if (!response.ok) throw new Error(`Evidence service HTTP ${response.status}`);
+    return response.json();
   }
-
   async function loadIncidentBundle(): Promise<IncidentBundle> {
-    const [rawHealth, rawEvents] = await Promise.all([
-      requestDemo('/health'),
-      requestDemo('/events'),
-    ]);
-    const health = ServiceHealthSchema.parse(rawHealth);
-    const eventsPayload = rawEvents as { events?: unknown[] };
-    const evidence = (eventsPayload.events ?? []).map((event) => EvidenceEventSchema.parse(event));
+    const raw = options.loadBundle ? await options.loadBundle() : await requestDemo('/snapshot');
+    return sanitizeBundle(IncidentBundleSchema.parse(raw));
+  }
+  app.get('/health', async () => ({ service: 'pocketsre-gateway', status: 'healthy' }));
+  app.get('/v1/config', async () => ({
+    mode: options.loadBundle ? 'live' : 'demo',
+    actions: options.loadBundle
+      ? ['RUN_HEALTH_CHECK']
+      : ['RUN_HEALTH_CHECK', 'TRIGGER_ROLLBACK_WORKFLOW'],
+  }));
+  app.get('/v1/services', async () => ({ services: [(await loadIncidentBundle()).serviceHealth] }));
+  app.get('/v1/incidents/current', async () => loadIncidentBundle());
+  app.get('/v1/actions/audit', async () => ({ entries: audit.list() }));
 
-    return sanitizeBundle({
-      schemaVersion: 1,
-      generatedAt: new Date().toISOString(),
-      incident: incidentFromHealth(health),
-      serviceHealth: health,
-      evidence,
+  for (const operation of ['break', 'reset']) {
+    app.post(`/v1/demo/${operation}`, async (_request, reply) => {
+      if (options.loadBundle) return reply.code(403).send({ error: 'demo_disabled' });
+      if (executing) return reply.code(409).send({ error: 'action_in_progress' });
+      executing = true;
+      try {
+        return await requestDemo(`/demo/${operation}`, { method: 'POST', body: '{}' });
+      } finally {
+        executing = false;
+      }
     });
   }
-
-  app.get('/health', async () => ({
-    service: 'pocketsre-gateway',
-    status: 'healthy',
-    checkedAt: new Date().toISOString(),
-  }));
-
-  app.get('/v1/services', async () => {
-    const bundle = await loadIncidentBundle();
-    return { services: [bundle.serviceHealth] };
-  });
-
-  app.get('/v1/incidents/current', async () => loadIncidentBundle());
-
-  app.post('/v1/demo/break', async (_request, reply) => {
-    const payload = await requestDemo('/demo/break', { method: 'POST', body: '{}' });
-    return reply.code(202).send(payload);
-  });
-
-  app.post('/v1/demo/reset', async (_request, reply) => {
-    const payload = await requestDemo('/demo/reset', { method: 'POST', body: '{}' });
-    return reply.code(200).send(payload);
-  });
 
   app.post('/v1/actions/execute', async (request, reply) => {
     const parsed = ApprovedActionRequestSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'invalid_action', issues: parsed.error.issues });
-    }
-
-    if (parsed.data.serviceId !== 'checkout-api') {
-      return reply.code(403).send({ error: 'service_not_allowed' });
-    }
-
-    if (parsed.data.action === 'RUN_HEALTH_CHECK') {
-      const health = await requestDemo('/health');
-      return reply.send({
-        actionId: `health-${Date.now()}`,
-        status: 'succeeded',
-        message: JSON.stringify(health),
-        startedAt: parsed.data.approvedAt,
-        completedAt: new Date().toISOString(),
-      });
-    }
-
-    if (parsed.data.action !== 'TRIGGER_ROLLBACK_WORKFLOW') {
-      return reply.code(403).send({ error: 'action_not_enabled_for_demo' });
-    }
-
-    const payload = await requestDemo('/actions/rollback', {
-      method: 'POST',
-      body: JSON.stringify({ targetRelease: parsed.data.parameters.targetRelease }),
+    if (!parsed.success)
+      return reply
+        .code(400)
+        .send({ error: 'invalid_action', message: 'Malformed approval request.' });
+    const input = parsed.data;
+    const fingerprint = JSON.stringify({
+      ...input,
+      parameters: Object.fromEntries(Object.entries(input.parameters).sort()),
     });
-    return reply.code(202).send(payload);
+    const existing = audit.get(input.requestId);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint)
+        return reply.code(409).send({ error: 'idempotency_conflict' });
+      return reply.code(202).send(existing.entry.result);
+    }
+    if (executing) return reply.code(409).send({ error: 'action_in_progress' });
+    if (
+      input.action === 'CREATE_GITHUB_ISSUE' ||
+      (options.loadBundle && input.action !== 'RUN_HEALTH_CHECK')
+    ) {
+      return reply.code(403).send({ error: 'action_not_enabled' });
+    }
+    const age = Date.now() - Date.parse(input.approvedAt);
+    if (age > 120_000 || age < -5_000)
+      return reply
+        .code(409)
+        .send({ error: 'approval_expired', message: 'Refresh and approve the action again.' });
+    executing = true;
+    try {
+      const bundle = await loadIncidentBundle();
+      if (
+        input.serviceId !== bundle.incident.serviceId ||
+        input.target !== bundle.incident.serviceId
+      ) {
+        return reply.code(403).send({ error: 'target_not_allowed' });
+      }
+      if (
+        input.incidentId !== bundle.incident.id ||
+        input.expectedVersion !== bundle.serviceHealth.version
+      ) {
+        return reply.code(409).send({
+          error: 'stale_incident',
+          message: 'The incident changed. Refresh before approving.',
+        });
+      }
+      const targetRelease = getRollbackTarget(bundle);
+      if (
+        input.action === 'TRIGGER_ROLLBACK_WORKFLOW' &&
+        (!targetRelease ||
+          input.parameters.targetRelease !== targetRelease ||
+          Object.keys(input.parameters).some((key) => key !== 'targetRelease'))
+      ) {
+        return reply.code(409).send({ error: 'rollback_not_verified' });
+      }
+      if (input.action === 'RUN_HEALTH_CHECK' && Object.keys(input.parameters).length)
+        return reply.code(400).send({ error: 'unexpected_parameters' });
+
+      const entry: AuditEntry = {
+        requestId: input.requestId,
+        incidentId: input.incidentId,
+        serviceId: input.serviceId,
+        action: input.action,
+        targetRelease: input.action === 'TRIGGER_ROLLBACK_WORKFLOW' ? targetRelease : null,
+        result: {
+          actionId: randomUUID(),
+          status: 'running',
+          message: 'Approved action started.',
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+        },
+      };
+      await audit.save(entry, fingerprint);
+      try {
+        if (input.action === 'TRIGGER_ROLLBACK_WORKFLOW') {
+          ActionResultSchema.parse(
+            await requestDemo('/actions/rollback', {
+              method: 'POST',
+              body: JSON.stringify({ targetRelease }),
+            }),
+          );
+        }
+        const verified = await loadIncidentBundle();
+        const recovered = verified.serviceHealth.status === 'healthy';
+        entry.result.status =
+          input.action === 'RUN_HEALTH_CHECK' || recovered ? 'succeeded' : 'failed';
+        entry.result.message =
+          input.action === 'RUN_HEALTH_CHECK'
+            ? `Health check: ${verified.serviceHealth.status}. Release ${verified.serviceHealth.version}.`
+            : recovered
+              ? `Recovery verified: ${verified.serviceHealth.version} is healthy.`
+              : 'Rollback responded, but service health has not recovered.';
+      } catch {
+        entry.result.status = 'failed';
+        entry.result.message =
+          'Action outcome could not be verified. Refresh health before attempting another action.';
+      }
+      entry.result.completedAt = new Date().toISOString();
+      await audit.save(entry, fingerprint);
+      return reply.code(202).send(entry.result);
+    } finally {
+      executing = false;
+    }
   });
 
   app.setErrorHandler((error, _request, reply) => {
-    app.log.error(error);
-    reply.code(502).send({
-      error: 'upstream_unavailable',
-      message: 'PocketSRE could not load the operational evidence source.',
+    const status =
+      error && typeof error === 'object' && 'statusCode' in error ? Number(error.statusCode) : 502;
+    reply.code(status >= 400 && status < 500 ? status : 502).send({
+      error: 'request_failed',
+      message:
+        'Could not complete the request. Check gateway connectivity and source configuration.',
     });
   });
-
   return app;
 }

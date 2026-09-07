@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { randomUUID } from 'expo-crypto';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { Diagnosis, EvidenceEvent, IncidentBundle } from '@pocketsre/contracts';
@@ -139,6 +140,8 @@ function AppContent() {
     setMessage('Executing the approved allowlisted action…');
     try {
       const result = await executeApprovedAction({
+        requestId: randomUUID(),
+        expectedVersion: bundle.serviceHealth.version,
         incidentId: bundle.incident.id,
         serviceId: bundle.incident.serviceId,
         action: proposal.type,

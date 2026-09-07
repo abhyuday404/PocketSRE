@@ -70,6 +70,15 @@ export const IncidentBundleSchema = z.object({
   incident: IncidentSchema,
   serviceHealth: ServiceHealthSchema,
   evidence: z.array(EvidenceEventSchema),
+  collection: z
+    .array(
+      z.object({
+        source: z.string(),
+        status: z.enum(['ok', 'unavailable']),
+        message: z.string(),
+      }),
+    )
+    .optional(),
 });
 export type IncidentBundle = z.infer<typeof IncidentBundleSchema>;
 
@@ -115,6 +124,8 @@ export type Diagnosis = z.infer<typeof DiagnosisSchema>;
 export const diagnosisJsonSchema = z.toJSONSchema(DiagnosisSchema);
 
 export const ApprovedActionRequestSchema = z.object({
+  requestId: z.string().uuid(),
+  expectedVersion: z.string().min(1),
   incidentId: z.string().min(1),
   serviceId: z.string().min(1),
   action: AllowedActionSchema,
@@ -132,6 +143,16 @@ export const ActionResultSchema = z.object({
   completedAt: z.string().datetime().nullable(),
 });
 export type ActionResult = z.infer<typeof ActionResultSchema>;
+
+export const AuditEntrySchema = z.object({
+  requestId: z.string(),
+  incidentId: z.string(),
+  serviceId: z.string(),
+  action: AllowedActionSchema,
+  targetRelease: z.string().nullable(),
+  result: ActionResultSchema,
+});
+export type AuditEntry = z.infer<typeof AuditEntrySchema>;
 
 export const InvestigationResultSchema = z.object({
   schemaVersion: z.literal(1),
