@@ -1,12 +1,53 @@
 import { createGatewayApp } from './app.js';
 import { resolve } from 'node:path';
+import {
+  createLiveBundleLoader,
+  GitHubConnector,
+  SentryConnector,
+  type EvidenceConnector,
+} from './connectors.js';
 
 const port = Number(process.env.GATEWAY_PORT ?? 4100);
 const host = process.env.GATEWAY_HOST ?? '127.0.0.1';
 if (host !== '127.0.0.1' && host !== 'localhost' && !process.env.GATEWAY_ACCESS_TOKEN) {
   throw new Error('GATEWAY_ACCESS_TOKEN is required when binding to the LAN.');
 }
+const mode = process.env.POCKETSRE_MODE ?? 'demo';
+if (!['demo', 'live'].includes(mode)) throw new Error('POCKETSRE_MODE must be demo or live');
+const connectors: EvidenceConnector[] = [];
+if (mode === 'live') {
+  if (!process.env.HEALTH_URL) throw new Error('HEALTH_URL is required in live mode');
+  if (process.env.GITHUB_REPOSITORY)
+    connectors.push(new GitHubConnector(process.env.GITHUB_REPOSITORY, process.env.GITHUB_TOKEN));
+  if (
+    process.env.SENTRY_ORGANIZATION ||
+    process.env.SENTRY_PROJECT ||
+    process.env.SENTRY_AUTH_TOKEN
+  ) {
+    if (
+      !process.env.SENTRY_ORGANIZATION ||
+      !process.env.SENTRY_PROJECT ||
+      !process.env.SENTRY_AUTH_TOKEN
+    )
+      throw new Error('Set all three Sentry settings');
+    connectors.push(
+      new SentryConnector(
+        process.env.SENTRY_ORGANIZATION,
+        process.env.SENTRY_PROJECT,
+        process.env.SENTRY_AUTH_TOKEN,
+      ),
+    );
+  }
+}
 const app = createGatewayApp({
+  loadBundle:
+    mode === 'live'
+      ? createLiveBundleLoader({
+          healthUrl: process.env.HEALTH_URL!,
+          healthToken: process.env.HEALTH_TOKEN,
+          connectors,
+        })
+      : undefined,
   demoServiceUrl: process.env.DEMO_SERVICE_URL,
   accessToken: process.env.GATEWAY_ACCESS_TOKEN,
   auditPath: resolve(process.env.AUDIT_PATH ?? '.pocketsre-data/actions.json'),
@@ -14,7 +55,7 @@ const app = createGatewayApp({
 
 try {
   await app.listen({ port, host });
-  app.log.info(`PocketSRE gateway listening on http://${host}:${port}`);
+  console.info(`PocketSRE gateway (${mode}) listening on http://${host}:${port}`);
 } catch (error) {
   app.log.error(error);
   process.exit(1);
