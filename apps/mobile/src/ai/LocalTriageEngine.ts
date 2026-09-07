@@ -1,8 +1,9 @@
-import type { Diagnosis, IncidentBundle } from '@pocketsre/contracts';
+import { diagnosisJsonSchema, type Diagnosis, type IncidentBundle } from '@pocketsre/contracts';
 import {
   buildTriagePrompt,
   createDeterministicDiagnosis,
   validateDiagnosis,
+  sanitizeBundle,
 } from '@pocketsre/incident-engine';
 
 export interface LocalTriageEngine {
@@ -15,7 +16,7 @@ export class DeterministicTriageEngine implements LocalTriageEngine {
   readonly modeLabel = 'Deterministic offline fallback';
 
   async analyze(bundle: IncidentBundle): Promise<Diagnosis> {
-    return createDeterministicDiagnosis(bundle);
+    return createDeterministicDiagnosis(sanitizeBundle(bundle));
   }
 }
 
@@ -30,12 +31,12 @@ export class LlamaRnTriageEngine implements LocalTriageEngine {
   private async getContext(): Promise<LlamaContext> {
     if (this.context) return this.context;
     const { initLlama } = await import('llama.rn');
+    const accelerator = process.env.EXPO_PUBLIC_ACCELERATOR ?? 'cpu';
     this.context = await initLlama({
       model: this.modelPath,
-      n_ctx: 3072,
-      n_gpu_layers: 99,
-      devices: ['HTP0'],
-      use_mlock: true,
+      n_ctx: 8192,
+      n_gpu_layers: accelerator === 'cpu' ? 0 : 99,
+      ...(accelerator === 'npu' ? { devices: ['HTP0'] } : {}),
     });
     return this.context;
   }
@@ -43,8 +44,12 @@ export class LlamaRnTriageEngine implements LocalTriageEngine {
   async analyze(bundle: IncidentBundle): Promise<Diagnosis> {
     const context = await this.getContext();
     const response = await context.completion({
-      prompt: buildTriagePrompt(bundle),
-      n_predict: 700,
+      messages: [{ role: 'user', content: buildTriagePrompt(bundle) }],
+      response_format: {
+        type: 'json_schema',
+        json_schema: { strict: true, schema: diagnosisJsonSchema },
+      },
+      n_predict: 1000,
       temperature: 0.1,
       stop: ['</s>', '<|eot_id|>', '<|im_end|>'],
     });
@@ -69,5 +74,28 @@ export class LlamaRnTriageEngine implements LocalTriageEngine {
 
 export function createTriageEngine(): LocalTriageEngine {
   const modelPath = process.env.EXPO_PUBLIC_MODEL_PATH?.trim();
-  return modelPath ? new LlamaRnTriageEngine(modelPath) : new DeterministicTriageEngine();
+  return modelPath
+    ? new ResilientTriageEngine(new LlamaRnTriageEngine(modelPath))
+    : new DeterministicTriageEngine();
+}
+
+export class ResilientTriageEngine implements LocalTriageEngine {
+  modeLabel = 'On-device model';
+  constructor(private readonly primary: LocalTriageEngine) {}
+  async analyze(raw: IncidentBundle): Promise<Diagnosis> {
+    const bundle = sanitizeBundle(raw);
+    try {
+      const result = await this.primary.analyze(bundle);
+      const validated = validateDiagnosis(result, bundle);
+      if (!validated.success) throw new Error('Unverified diagnosis');
+      this.modeLabel = this.primary.modeLabel;
+      return validated.diagnosis;
+    } catch {
+      this.modeLabel = 'Model unavailable or unverified; local rule-based fallback';
+      return createDeterministicDiagnosis(bundle);
+    }
+  }
+  async release() {
+    await this.primary.release?.();
+  }
 }

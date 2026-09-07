@@ -3,22 +3,46 @@ import {
   IncidentBundleSchema,
   type ApprovedActionRequest,
   type IncidentBundle,
+  AuditEntrySchema,
 } from '@pocketsre/contracts';
+import type { ConnectionSettings } from '../settings/connection';
 
-const gatewayUrl = (process.env.EXPO_PUBLIC_GATEWAY_URL ?? 'http://127.0.0.1:4100').replace(
+let gatewayUrl = (process.env.EXPO_PUBLIC_GATEWAY_URL ?? 'http://127.0.0.1:4100').replace(
   /\/$/,
   '',
 );
+let gatewayToken = '';
+export function configureGateway(settings: ConnectionSettings): void {
+  gatewayUrl = settings.url;
+  gatewayToken = settings.token;
+}
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(`${gatewayUrl}${path}`, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(`${gatewayUrl}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        'content-type': 'application/json',
+        ...(gatewayToken ? { authorization: `Bearer ${gatewayToken}` } : {}),
+        ...init?.headers,
+      },
+    });
 
-  const payload: unknown = await response.json();
-  if (!response.ok) throw new Error(`Gateway request failed (${response.status}).`);
-  return payload;
+    const payload: unknown = await response.json();
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === 'object' && 'message' in payload
+          ? String(payload.message)
+          : `Gateway request failed (${response.status}).`;
+      throw new Error(message);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function fetchCurrentIncident(): Promise<IncidentBundle> {
@@ -41,4 +65,14 @@ export async function executeApprovedAction(action: ApprovedActionRequest) {
 
 export function getGatewayUrl(): string {
   return gatewayUrl;
+}
+
+export async function fetchAudit() {
+  const payload = (await request('/v1/actions/audit')) as { entries: unknown };
+  return AuditEntrySchema.array().parse(payload.entries);
+}
+export async function fetchGatewayMode(): Promise<'demo' | 'live'> {
+  const payload = (await request('/v1/config')) as { mode: unknown };
+  if (payload.mode !== 'demo' && payload.mode !== 'live') throw new Error('Unknown gateway mode.');
+  return payload.mode;
 }

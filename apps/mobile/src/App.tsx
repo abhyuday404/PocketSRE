@@ -1,31 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { randomUUID } from 'expo-crypto';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import type { Diagnosis, EvidenceEvent, IncidentBundle } from '@pocketsre/contracts';
+import type { EvidenceEvent } from '@pocketsre/contracts';
 import { chronologicalEvidence } from '@pocketsre/incident-engine';
-import {
-  executeApprovedAction,
-  fetchCurrentIncident,
-  getGatewayUrl,
-  injectDemoRegression,
-  resetDemo,
-} from './api/gateway';
-import { createTriageEngine } from './ai/LocalTriageEngine';
-import { createSampleIncident } from './data/sampleIncident';
-import { serializeOfficeKitBundle } from './officekit/bundle';
+import { useIncident } from './hooks/useIncident';
+import { Connections } from './components/Connections';
 import { colors } from './theme';
 
 const sourceLabels: Record<EvidenceEvent['source'], string> = {
@@ -42,128 +30,30 @@ function timeLabel(timestamp: string): string {
 }
 
 function AppContent() {
-  const [bundle, setBundle] = useState<IncidentBundle>(() => createSampleIncident());
-  const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [connection, setConnection] = useState<'live' | 'cached'>('cached');
-  const [message, setMessage] = useState('Cached incident ready for offline triage.');
-  const engine = useMemo(() => createTriageEngine(), []);
+  const {
+    bundle,
+    diagnosis,
+    busy,
+    connection,
+    mode,
+    message,
+    settings,
+    history,
+    audit,
+    canExecute,
+    refresh,
+    analyze,
+    breakDemo,
+    restoreDemo,
+    confirmAction,
+    shareBundle,
+    importFile,
+    selectHistory,
+    updateConnection,
+    clearCache,
+  } = useIncident();
   const evidence = chronologicalEvidence(bundle);
   const cited = new Set(diagnosis?.evidenceIds ?? []);
-
-  async function refresh() {
-    setRefreshing(true);
-    try {
-      const current = await fetchCurrentIncident();
-      setBundle(current);
-      setDiagnosis(null);
-      setConnection('live');
-      setMessage(`Connected to ${getGatewayUrl()}`);
-    } catch {
-      setConnection('cached');
-      setMessage('Gateway unavailable. Showing the last cached incident.');
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
-  useEffect(() => {
-    void refresh();
-    return () => {
-      void engine.release?.();
-    };
-  }, [engine]);
-
-  async function analyze() {
-    setBusy(true);
-    setMessage('Analyzing the sanitized incident bundle on this device…');
-    try {
-      const result = await engine.analyze(bundle);
-      setDiagnosis(result);
-      setMessage(`Analysis complete · ${engine.modeLabel}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Local analysis failed.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function breakDemo() {
-    setBusy(true);
-    try {
-      await injectDemoRegression();
-      await refresh();
-      setMessage('Regression injected. Production signals are arriving.');
-    } catch {
-      setMessage('The live demo service is unavailable. Cached evidence is unchanged.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function restoreDemo() {
-    setBusy(true);
-    try {
-      await resetDemo();
-      await refresh();
-      setMessage('Demo service reset to its healthy release.');
-    } catch {
-      setMessage('Could not reset the demo service.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function confirmAction() {
-    const proposal = diagnosis?.proposedAction;
-    if (!proposal) return;
-
-    Alert.alert(
-      proposal.type === 'TRIGGER_ROLLBACK_WORKFLOW' ? 'Confirm rollback' : 'Confirm action',
-      `${proposal.reason}\n\nTarget: ${proposal.target}\nRisk: ${proposal.risk}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Approve',
-          style: proposal.type === 'TRIGGER_ROLLBACK_WORKFLOW' ? 'destructive' : 'default',
-          onPress: () => void runAction(),
-        },
-      ],
-    );
-  }
-
-  async function runAction() {
-    const proposal = diagnosis?.proposedAction;
-    if (!proposal) return;
-    setBusy(true);
-    setMessage('Executing the approved allowlisted action…');
-    try {
-      const result = await executeApprovedAction({
-        requestId: randomUUID(),
-        expectedVersion: bundle.serviceHealth.version,
-        incidentId: bundle.incident.id,
-        serviceId: bundle.incident.serviceId,
-        action: proposal.type,
-        target: proposal.target,
-        parameters: proposal.parameters,
-        approvedAt: new Date().toISOString(),
-      });
-      await refresh();
-      setMessage(result.message);
-    } catch {
-      setMessage('The action failed safely. No additional actions were attempted.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function shareBundle() {
-    await Share.share({
-      title: `PocketSRE ${bundle.incident.id}`,
-      message: serializeOfficeKitBundle(bundle),
-    });
-  }
 
   const isHealthy = bundle.serviceHealth.status === 'healthy';
 
@@ -174,7 +64,7 @@ function AppContent() {
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
-            refreshing={refreshing}
+            refreshing={busy}
             onRefresh={() => void refresh()}
             tintColor={colors.accent}
           />
@@ -189,9 +79,17 @@ function AppContent() {
             <View
               style={[styles.connectionDot, connection === 'live' && styles.connectionDotLive]}
             />
-            <Text style={styles.connectionText}>{connection === 'live' ? 'LIVE' : 'CACHED'}</Text>
+            <Text style={styles.connectionText}>
+              {connection === 'live'
+                ? mode === 'demo'
+                  ? 'DEMO'
+                  : 'LIVE'
+                : connection.toUpperCase()}
+            </Text>
           </View>
         </View>
+
+        <Connections settings={settings} busy={busy} onSave={updateConnection} />
 
         <LinearGradient
           colors={isHealthy ? ['#173C2D', '#0B2019'] : ['#3A2017', '#171612']}
@@ -241,16 +139,24 @@ function AppContent() {
           <Pressable disabled={busy} onPress={() => void analyze()} style={styles.primaryButton}>
             <Text style={styles.primaryButtonText}>{busy ? 'Working…' : 'Analyze locally'}</Text>
           </Pressable>
-          <Pressable
-            disabled={busy}
-            onPress={() => void breakDemo()}
-            style={styles.secondaryButton}
-          >
-            <Text style={styles.secondaryButtonText}>Inject regression</Text>
-          </Pressable>
+          {mode === 'demo' && connection === 'live' ? (
+            <Pressable
+              disabled={busy}
+              onPress={() => void breakDemo()}
+              style={styles.secondaryButton}
+            >
+              <Text style={styles.secondaryButtonText}>Inject regression</Text>
+            </Pressable>
+          ) : null}
         </View>
 
-        <Text style={styles.sectionLabel}>ACTIVE INCIDENT</Text>
+        {bundle.collection?.map((item) => (
+          <Text key={item.source} style={styles.muted}>
+            {item.source}: {item.message}
+          </Text>
+        ))}
+
+        <Text style={styles.sectionLabel}>{isHealthy ? 'SERVICE STATUS' : 'INCIDENT'}</Text>
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.incidentTitle}>{bundle.incident.title}</Text>
@@ -279,6 +185,14 @@ function AppContent() {
                 {diagnosis.likelyCause ?? 'More evidence is required.'}
               </Text>
               <Text style={styles.body}>{diagnosis.summary}</Text>
+              {diagnosis.nextDiagnosticStep ? (
+                <Text style={styles.body}>Next check: {diagnosis.nextDiagnosticStep}</Text>
+              ) : null}
+              {diagnosis.alternativeCauses.map((cause, index) => (
+                <Text key={index} style={styles.body}>
+                  Alternative ({cause.confidence}): {cause.statement}
+                </Text>
+              ))}
               <Text style={styles.evidenceHint}>
                 {diagnosis.evidenceIds.length} evidence items cited below
               </Text>
@@ -294,8 +208,14 @@ function AppContent() {
                 </Text>
                 <Text style={styles.body}>{diagnosis.proposedAction.reason}</Text>
                 <Text style={styles.risk}>Risk · {diagnosis.proposedAction.risk}</Text>
-                <Pressable onPress={confirmAction} style={styles.actionButton}>
-                  <Text style={styles.actionButtonText}>Review and approve</Text>
+                <Pressable
+                  disabled={!canExecute}
+                  onPress={confirmAction}
+                  style={[styles.actionButton, !canExecute && { opacity: 0.4 }]}
+                >
+                  <Text style={styles.actionButtonText}>
+                    {canExecute ? 'Review and approve' : 'Refresh live data to act'}
+                  </Text>
                 </Pressable>
               </View>
             ) : null}
@@ -304,10 +224,13 @@ function AppContent() {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionLabel}>INCIDENT TIMELINE</Text>
-          <Pressable onPress={() => void shareBundle()}>
+          <Pressable disabled={busy} onPress={() => void shareBundle()}>
             <Text style={styles.shareText}>Share bundle ↗</Text>
           </Pressable>
         </View>
+        <Pressable disabled={busy} onPress={() => void importFile()} style={styles.secondaryButton}>
+          <Text style={styles.secondaryButtonText}>Import incident or investigation file</Text>
+        </Pressable>
         <View style={styles.timeline}>
           {evidence.map((event, index) => (
             <View key={event.id} style={styles.timelineItem}>
@@ -330,9 +253,48 @@ function AppContent() {
           ))}
         </View>
 
-        <Pressable disabled={busy} onPress={() => void restoreDemo()} style={styles.resetButton}>
-          <Text style={styles.resetText}>Reset demo service</Text>
-        </Pressable>
+        {audit.length ? (
+          <>
+            <Text style={styles.sectionLabel}>ACTION HISTORY</Text>
+            {audit.map((entry) => (
+              <View key={entry.requestId} style={styles.card}>
+                <Text style={styles.eventTitle}>
+                  {entry.action.replaceAll('_', ' ')} · {entry.result.status}
+                </Text>
+                <Text style={styles.body}>{entry.result.message}</Text>
+                <Text style={styles.muted}>
+                  {timeLabel(entry.result.startedAt)} · {entry.serviceId}
+                </Text>
+              </View>
+            ))}
+          </>
+        ) : null}
+        {history.length ? (
+          <>
+            <Text style={styles.sectionLabel}>SAVED INCIDENTS</Text>
+            {history.map((item) => (
+              <Pressable
+                key={item.incident.id}
+                disabled={busy}
+                style={styles.card}
+                onPress={() => selectHistory(item)}
+              >
+                <Text style={styles.eventTitle}>{item.incident.title}</Text>
+                <Text style={styles.muted}>
+                  {new Date(item.generatedAt).toLocaleString()} · {item.incident.status}
+                </Text>
+              </Pressable>
+            ))}
+            <Pressable disabled={busy} onPress={() => void clearCache()}>
+              <Text style={styles.resetText}>Clear saved incident history</Text>
+            </Pressable>
+          </>
+        ) : null}
+        {mode === 'demo' && connection === 'live' ? (
+          <Pressable disabled={busy} onPress={() => void restoreDemo()} style={styles.resetButton}>
+            <Text style={styles.resetText}>Reset demo service</Text>
+          </Pressable>
+        ) : null}
         <Text style={styles.footer}>
           Private by default · Evidence before action · Human in control
         </Text>
