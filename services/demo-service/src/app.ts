@@ -73,6 +73,7 @@ export function createDemoApp() {
         metadata: {
           release: BROKEN_RELEASE,
           previousRelease: HEALTHY_RELEASE,
+          previousHealthy: 'true',
           commitSha: 'a13fd92',
         },
       },

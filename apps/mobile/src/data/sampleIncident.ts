@@ -47,6 +47,7 @@ export function createSampleIncident(): IncidentBundle {
         metadata: {
           release: 'rel-2026.09.2',
           previousRelease: 'rel-2026.09.1',
+          previousHealthy: 'true',
           commitSha: 'a13fd92',
         },
       },

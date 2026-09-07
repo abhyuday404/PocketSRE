@@ -1,5 +1,6 @@
 import type { Diagnosis, EvidenceEvent, IncidentBundle } from '@pocketsre/contracts';
 import { selectRelevantEvidence } from './correlate.js';
+import { getRollbackTarget } from './recovery.js';
 
 function findFirst(
   events: EvidenceEvent[],
@@ -10,6 +11,21 @@ function findFirst(
 
 export function createDeterministicDiagnosis(bundle: IncidentBundle): Diagnosis {
   const relevant = selectRelevantEvidence(bundle);
+  if (bundle.serviceHealth.status === 'healthy') {
+    return {
+      mode: 'deterministic',
+      summary: 'The latest health snapshot reports a healthy service.',
+      likelyCause: null,
+      confidence: 'low',
+      evidenceIds: relevant
+        .filter((event) => ['health_check_passed', 'recovery_completed'].includes(event.type))
+        .map((event) => event.id),
+      alternativeCauses: [],
+      nextDiagnosticStep: null,
+      proposedAction: null,
+    };
+  }
+  const rollbackTarget = getRollbackTarget(bundle);
   const exception = findFirst(relevant, 'exception');
   const configuration = findFirst(relevant, 'configuration_changed');
   const failedHealth =
@@ -28,10 +44,10 @@ export function createDeterministicDiagnosis(bundle: IncidentBundle): Diagnosis 
     );
     return {
       mode: 'deterministic',
-      summary: `${bundle.incident.title} began after the current release and is affecting ${bundle.incident.serviceId}.`,
+      summary: `Configuration and exception evidence suggest a database configuration issue in ${bundle.incident.serviceId}.`,
       likelyCause:
         'A deployment configuration mismatch is preventing the service from connecting to its database.',
-      confidence: failedHealth && deployment ? 'high' : 'medium',
+      confidence: rollbackTarget && failedHealth ? 'high' : 'medium',
       evidenceIds,
       alternativeCauses: [
         {
@@ -42,18 +58,20 @@ export function createDeterministicDiagnosis(bundle: IncidentBundle): Diagnosis 
       ],
       nextDiagnosticStep:
         'Compare the current release environment contract with the last healthy release.',
-      proposedAction: {
-        type: 'TRIGGER_ROLLBACK_WORKFLOW',
-        target: bundle.incident.serviceId,
-        reason:
-          'The incident began after the current deployment and the previous release was healthy.',
-        risk: 'Requests in flight may fail while the previous release becomes active.',
-        reversible: true,
-        evidenceIds,
-        parameters: {
-          targetRelease: deployment?.metadata.previousRelease ?? 'rel-2026.09.1',
-        },
-      },
+      proposedAction: rollbackTarget
+        ? {
+            type: 'TRIGGER_ROLLBACK_WORKFLOW',
+            target: bundle.incident.serviceId,
+            reason:
+              'The incident began after the current deployment and the previous release was healthy.',
+            risk: 'Requests in flight may fail while the previous release becomes active.',
+            reversible: true,
+            evidenceIds,
+            parameters: {
+              targetRelease: rollbackTarget,
+            },
+          }
+        : null,
     };
   }
 

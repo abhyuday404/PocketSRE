@@ -112,6 +112,7 @@ export const DiagnosisSchema = z.object({
   proposedAction: ActionProposalSchema.nullable(),
 });
 export type Diagnosis = z.infer<typeof DiagnosisSchema>;
+export const diagnosisJsonSchema = z.toJSONSchema(DiagnosisSchema);
 
 export const ApprovedActionRequestSchema = z.object({
   incidentId: z.string().min(1),
