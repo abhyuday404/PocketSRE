@@ -11,13 +11,14 @@
     "dev": "turbo run dev",
     "dev:backend": "turbo run dev --filter=@pocketsre/gateway --filter=@pocketsre/demo-service",
     "dev:mobile": "pnpm --filter @pocketsre/contracts build && pnpm --filter @pocketsre/incident-engine build && pnpm --filter @pocketsre/mobile start",
-    "investigator": "pnpm --filter @pocketsre/investigator-cli dev --",
+    "investigator": "tsx tools/investigator-cli/src/cli.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
+    "tsx": "catalog:",
     "@types/node": "22.20.1",
     "prettier": "3.9.6",
     "turbo": "2.10.12",

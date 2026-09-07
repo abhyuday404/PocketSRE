@@ -35,6 +35,9 @@ importers:
       prettier:
         specifier: 3.9.6
         version: 3.9.6
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.13
       turbo:
         specifier: 2.10.12
         version: 2.10.12

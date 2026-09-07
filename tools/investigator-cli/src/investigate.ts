@@ -23,7 +23,7 @@ export function investigate(bundle: IncidentBundle): InvestigationResult {
         status: configSignals.length >= 2 ? 'failed' : 'inconclusive',
         summary:
           configSignals.length >= 2
-            ? 'Multiple sources indicate that DB_URL and DATABASE_URL no longer agree.'
+            ? 'Configuration-related evidence is present in multiple events. Compare the environment contract to confirm a mismatch.'
             : 'No conclusive configuration contract mismatch was found.',
         evidenceIds: configSignals.map((event) => event.id),
       },
@@ -32,7 +32,7 @@ export function investigate(bundle: IncidentBundle): InvestigationResult {
         status: databaseSignals.length >= 2 ? 'failed' : 'inconclusive',
         summary:
           databaseSignals.length >= 2
-            ? 'Database readiness failed in the same incident window as the application exception.'
+            ? 'Multiple events mention database readiness or connection failures; inspect their timestamps and releases.'
             : 'Database readiness could not be correlated conclusively.',
         evidenceIds: databaseSignals.map((event) => event.id),
       },
