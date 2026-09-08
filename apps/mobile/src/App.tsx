@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -7,29 +10,109 @@ import {
   Text,
   View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { EvidenceEvent } from '@pocketsre/contracts';
 import { chronologicalEvidence } from '@pocketsre/incident-engine';
 import { useIncident } from './hooks/useIncident';
 import { Connections } from './components/Connections';
+import { Badge, Button, Card, Icon, ui, type IconName } from './components/ui';
 import { colors } from './theme';
 
+type Tab = 'Overview' | 'Activity' | 'Settings';
+type ActivityTab = 'Evidence' | 'Actions' | 'Saved';
+const navigation: { label: Tab; icon: IconName }[] = [
+  { label: 'Overview', icon: 'server' },
+  { label: 'Activity', icon: 'activity' },
+  { label: 'Settings', icon: 'settings' },
+];
 const sourceLabels: Record<EvidenceEvent['source'], string> = {
   github: 'GitHub',
-  deployment: 'Deploy',
+  deployment: 'Deployment',
   sentry: 'Sentry',
   health: 'Health',
   database: 'Database',
-  investigator: 'Deep check',
+  investigator: 'Investigation',
 };
+const timeLabel = (timestamp: string) =>
+  new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const actionLabel = (action: string) =>
+  action === 'TRIGGER_ROLLBACK_WORKFLOW'
+    ? 'Rollback'
+    : action === 'RUN_HEALTH_CHECK'
+      ? 'Health check'
+      : 'Issue creation';
 
-function timeLabel(timestamp: string): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function EvidenceItem({
+  event,
+  index,
+  cited,
+}: {
+  event: EvidenceEvent;
+  index: number;
+  cited: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View style={styles.evidenceRow}>
+      <Text style={styles.eventNumber}>{String(index + 1).padStart(2, '0')}</Text>
+      <View style={{ flex: 1, gap: 8 }}>
+        <View style={ui.between}>
+          <Text style={ui.label}>{sourceLabels[event.source]}</Text>
+          <Text style={ui.mono}>{timeLabel(event.timestamp)}</Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          accessibilityLabel={(expanded ? 'Collapse ' : 'Expand ') + event.title}
+          onPress={() => setExpanded(!expanded)}
+          style={[ui.between, { minHeight: 44 }]}
+        >
+          <Text style={[ui.title, { flex: 1, fontSize: 14 }]}>{event.title}</Text>
+          <View style={{ transform: [{ rotate: expanded ? '90deg' : '0deg' }] }}>
+            <Icon name="chevron" size={14} color={colors.textMuted} />
+          </View>
+        </Pressable>
+        <Text selectable style={ui.body} numberOfLines={expanded ? undefined : 2}>
+          {event.excerpt}
+        </Text>
+        {cited ? (
+          <View style={ui.row}>
+            <Icon name="check" size={12} color={colors.success} />
+            <Text style={[ui.label, { color: colors.success }]}>Cited in analysis</Text>
+          </View>
+        ) : null}
+        {expanded ? (
+          <View style={styles.codeBlock}>
+            <Text selectable style={ui.mono}>
+              {'Evidence ID: ' + event.id}
+            </Text>
+            {Object.entries(event.metadata).map(([key, value]) => (
+              <Text selectable key={key} style={ui.mono}>
+                {key + ': ' + value}
+              </Text>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function EmptyState({ title, description }: { title: string; description: string }) {
+  return (
+    <View style={styles.empty}>
+      <View style={styles.iconTile}>
+        <Icon name="clock" color={colors.textMuted} />
+      </View>
+      <Text style={ui.title}>{title}</Text>
+      <Text style={[ui.body, { textAlign: 'center' }]}>{description}</Text>
+    </View>
+  );
 }
 
 function AppContent() {
+  const state = useIncident();
   const {
     bundle,
     diagnosis,
@@ -51,254 +134,567 @@ function AppContent() {
     selectHistory,
     updateConnection,
     clearCache,
-  } = useIncident();
+  } = state;
+  const [tab, setTab] = useState<Tab>('Overview');
+  const [activityTab, setActivityTab] = useState<ActivityTab>('Evidence');
   const evidence = chronologicalEvidence(bundle);
-  const cited = new Set(diagnosis?.evidenceIds ?? []);
-
-  const isHealthy = bundle.serviceHealth.status === 'healthy';
+  const cited = new Set([
+    ...(diagnosis?.evidenceIds ?? []),
+    ...(diagnosis?.alternativeCauses.flatMap((cause) => cause.evidenceIds) ?? []),
+    ...(diagnosis?.proposedAction?.evidenceIds ?? []),
+  ]);
+  const healthy = bundle.serviceHealth.status === 'healthy';
+  const live = connection === 'live';
+  const demo = live && mode === 'demo';
+  const snapshot = !live;
+  const originLabel = live
+    ? mode === 'demo'
+      ? 'Demo'
+      : 'Live'
+    : connection === 'cached'
+      ? 'Offline'
+      : connection === 'imported'
+        ? 'Imported'
+        : 'Sample';
+  const showEvidence = () => {
+    setActivityTab('Evidence');
+    setTab('Activity');
+  };
+  const openIncidents = bundle.incident.status === 'resolved' ? 0 : 1;
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <StatusBar style="light" />
-      <ScrollView
-        contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl
-            refreshing={busy}
-            onRefresh={() => void refresh()}
-            tintColor={colors.accent}
-          />
-        }
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <StatusBar style="dark" />
+      <View style={styles.topBar}>
+        <View style={ui.row}>
+          <View style={styles.logo}>
+            <Icon name="terminal" color={colors.primaryForeground} size={19} />
+          </View>
+          <Text style={styles.brand}>PocketSRE</Text>
+        </View>
+        <View>
+          <Badge dot tone={live ? 'neutral' : 'warning'}>
+            {originLabel}
+          </Badge>
+        </View>
+      </View>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={styles.topRow}>
-          <View>
-            <Text style={styles.eyebrow}>PHONE-FIRST INCIDENT RESPONSE</Text>
-            <Text style={styles.brand}>PocketSRE</Text>
-          </View>
-          <View style={[styles.connectionPill, connection === 'live' && styles.connectionPillLive]}>
-            <View
-              style={[styles.connectionDot, connection === 'live' && styles.connectionDotLive]}
+        <ScrollView
+          key={tab}
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={busy}
+              onRefresh={() => void refresh()}
+              tintColor={colors.text}
+              colors={[colors.text]}
             />
-            <Text style={styles.connectionText}>
-              {connection === 'live'
-                ? mode === 'demo'
-                  ? 'DEMO'
-                  : 'LIVE'
-                : connection.toUpperCase()}
-            </Text>
-          </View>
-        </View>
-
-        <Connections settings={settings} busy={busy} onSave={updateConnection} />
-
-        <LinearGradient
-          colors={isHealthy ? ['#173C2D', '#0B2019'] : ['#3A2017', '#171612']}
-          style={styles.hero}
+          }
         >
-          <View style={styles.heroTop}>
-            <View>
-              <Text style={styles.heroLabel}>SERVICE HEALTH</Text>
-              <Text style={styles.serviceName}>{bundle.serviceHealth.serviceName}</Text>
-            </View>
-            <View
-              style={[styles.statusBadge, isHealthy ? styles.healthyBadge : styles.degradedBadge]}
-            >
-              <Text
-                style={[styles.statusText, isHealthy ? styles.healthyText : styles.degradedText]}
-              >
-                {bundle.serviceHealth.status.toUpperCase()}
+          <View style={styles.pageHeader}>
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text accessibilityRole="header" style={styles.pageTitle}>
+                {tab}
+              </Text>
+              <Text style={ui.body}>
+                {tab === 'Overview'
+                  ? 'Your service, at a glance.'
+                  : tab === 'Activity'
+                    ? 'The evidence behind every decision.'
+                    : 'Your workspace. Your connection.'}
               </Text>
             </View>
-          </View>
-          <Text style={styles.release}>Release {bundle.serviceHealth.version}</Text>
-          <View style={styles.checksRow}>
-            {Object.entries(bundle.serviceHealth.checks).map(([name, status]) => (
-              <View key={name} style={styles.check}>
-                <View
-                  style={[
-                    styles.checkDot,
-                    { backgroundColor: status === 'healthy' ? colors.accent : colors.danger },
-                  ]}
-                />
-                <Text style={styles.checkText}>{name}</Text>
-              </View>
-            ))}
-          </View>
-        </LinearGradient>
-
-        <View style={styles.messageBar}>
-          {busy ? (
-            <ActivityIndicator size="small" color={colors.accent} />
-          ) : (
-            <Text style={styles.spark}>✦</Text>
-          )}
-          <Text style={styles.messageText}>{message}</Text>
-        </View>
-
-        <View style={styles.actionsRow}>
-          <Pressable disabled={busy} onPress={() => void analyze()} style={styles.primaryButton}>
-            <Text style={styles.primaryButtonText}>{busy ? 'Working…' : 'Analyze locally'}</Text>
-          </Pressable>
-          {mode === 'demo' && connection === 'live' ? (
-            <Pressable
-              disabled={busy}
-              onPress={() => void breakDemo()}
-              style={styles.secondaryButton}
-            >
-              <Text style={styles.secondaryButtonText}>Inject regression</Text>
-            </Pressable>
-          ) : null}
-        </View>
-
-        {bundle.collection?.map((item) => (
-          <Text key={item.source} style={styles.muted}>
-            {item.source}: {item.message}
-          </Text>
-        ))}
-
-        <Text style={styles.sectionLabel}>{isHealthy ? 'SERVICE STATUS' : 'INCIDENT'}</Text>
-        <View style={styles.card}>
-          <View style={styles.cardTitleRow}>
-            <Text style={styles.incidentTitle}>{bundle.incident.title}</Text>
-            <Text style={[styles.severity, isHealthy && styles.severityHealthy]}>
-              {bundle.incident.severity.toUpperCase()}
-            </Text>
-          </View>
-          <Text style={styles.muted}>
-            Started {timeLabel(bundle.incident.startedAt)} · {evidence.length} signals
-          </Text>
-        </View>
-
-        {diagnosis ? (
-          <>
-            <Text style={styles.sectionLabel}>LOCAL DIAGNOSIS</Text>
-            <View style={styles.diagnosisCard}>
-              <View style={styles.confidenceRow}>
-                <Text style={styles.diagnosisMode}>
-                  {diagnosis.mode.replaceAll('-', ' ').toUpperCase()}
-                </Text>
-                <Text style={styles.confidence}>
-                  {diagnosis.confidence.toUpperCase()} CONFIDENCE
-                </Text>
-              </View>
-              <Text style={styles.diagnosisTitle}>
-                {diagnosis.likelyCause ?? 'More evidence is required.'}
-              </Text>
-              <Text style={styles.body}>{diagnosis.summary}</Text>
-              {diagnosis.nextDiagnosticStep ? (
-                <Text style={styles.body}>Next check: {diagnosis.nextDiagnosticStep}</Text>
-              ) : null}
-              {diagnosis.alternativeCauses.map((cause, index) => (
-                <Text key={index} style={styles.body}>
-                  Alternative ({cause.confidence}): {cause.statement}
-                </Text>
-              ))}
-              <Text style={styles.evidenceHint}>
-                {diagnosis.evidenceIds.length} evidence items cited below
-              </Text>
-            </View>
-
-            {diagnosis.proposedAction ? (
-              <View style={styles.actionCard}>
-                <Text style={styles.actionEyebrow}>SAFE RECOVERY PROPOSAL</Text>
-                <Text style={styles.actionTitle}>
-                  {diagnosis.proposedAction.type === 'TRIGGER_ROLLBACK_WORKFLOW'
-                    ? `Rollback to ${diagnosis.proposedAction.parameters.targetRelease ?? 'last healthy release'}`
-                    : 'Run a fresh health check'}
-                </Text>
-                <Text style={styles.body}>{diagnosis.proposedAction.reason}</Text>
-                <Text style={styles.risk}>Risk · {diagnosis.proposedAction.risk}</Text>
-                <Pressable
-                  disabled={!canExecute}
-                  onPress={confirmAction}
-                  style={[styles.actionButton, !canExecute && { opacity: 0.4 }]}
-                >
-                  <Text style={styles.actionButtonText}>
-                    {canExecute ? 'Review and approve' : 'Refresh live data to act'}
-                  </Text>
-                </Pressable>
-              </View>
-            ) : null}
-          </>
-        ) : null}
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionLabel}>INCIDENT TIMELINE</Text>
-          <Pressable disabled={busy} onPress={() => void shareBundle()}>
-            <Text style={styles.shareText}>Share bundle ↗</Text>
-          </Pressable>
-        </View>
-        <Pressable disabled={busy} onPress={() => void importFile()} style={styles.secondaryButton}>
-          <Text style={styles.secondaryButtonText}>Import incident or investigation file</Text>
-        </Pressable>
-        <View style={styles.timeline}>
-          {evidence.map((event, index) => (
-            <View key={event.id} style={styles.timelineItem}>
-              <View style={styles.timelineRail}>
-                <View
-                  style={[styles.timelineDot, cited.has(event.id) && styles.timelineDotCited]}
-                />
-                {index < evidence.length - 1 ? <View style={styles.timelineLine} /> : null}
-              </View>
-              <View style={[styles.eventCard, cited.has(event.id) && styles.eventCardCited]}>
-                <View style={styles.eventMeta}>
-                  <Text style={styles.source}>{sourceLabels[event.source]}</Text>
-                  <Text style={styles.eventTime}>{timeLabel(event.timestamp)}</Text>
-                </View>
-                <Text style={styles.eventTitle}>{event.title}</Text>
-                <Text style={styles.eventExcerpt}>{event.excerpt}</Text>
-                {cited.has(event.id) ? <Text style={styles.cited}>CITED BY DIAGNOSIS</Text> : null}
-              </View>
-            </View>
-          ))}
-        </View>
-
-        {audit.length ? (
-          <>
-            <Text style={styles.sectionLabel}>ACTION HISTORY</Text>
-            {audit.map((entry) => (
-              <View key={entry.requestId} style={styles.card}>
-                <Text style={styles.eventTitle}>
-                  {entry.action.replaceAll('_', ' ')} · {entry.result.status}
-                </Text>
-                <Text style={styles.body}>{entry.result.message}</Text>
-                <Text style={styles.muted}>
-                  {timeLabel(entry.result.startedAt)} · {entry.serviceId}
-                </Text>
-              </View>
-            ))}
-          </>
-        ) : null}
-        {history.length ? (
-          <>
-            <Text style={styles.sectionLabel}>SAVED INCIDENTS</Text>
-            {history.map((item) => (
+            {tab === 'Overview' ? (
               <Pressable
-                key={item.incident.id}
+                accessibilityRole="button"
+                accessibilityLabel="Refresh service health"
+                accessibilityState={{ disabled: busy }}
                 disabled={busy}
-                style={styles.card}
-                onPress={() => selectHistory(item)}
+                onPress={() => void refresh()}
+                style={({ pressed }) => [styles.iconButton, { opacity: busy || pressed ? 0.4 : 1 }]}
               >
-                <Text style={styles.eventTitle}>{item.incident.title}</Text>
-                <Text style={styles.muted}>
-                  {new Date(item.generatedAt).toLocaleString()} · {item.incident.status}
-                </Text>
+                <Icon name="refresh" size={18} />
               </Pressable>
-            ))}
-            <Pressable disabled={busy} onPress={() => void clearCache()}>
-              <Text style={styles.resetText}>Clear saved incident history</Text>
-            </Pressable>
-          </>
-        ) : null}
-        {mode === 'demo' && connection === 'live' ? (
-          <Pressable disabled={busy} onPress={() => void restoreDemo()} style={styles.resetButton}>
-            <Text style={styles.resetText}>Reset demo service</Text>
+            ) : null}
+          </View>
+
+          {snapshot ? (
+            <View style={styles.notice}>
+              <Text style={[ui.body, { color: colors.warning }]}>
+                {originLabel +
+                  ' snapshot · Health may have changed. Refresh live data before taking action.'}
+              </Text>
+            </View>
+          ) : null}
+
+          {tab === 'Overview' ? (
+            <>
+              <View style={styles.stats}>
+                <View style={styles.stat}>
+                  <Text style={ui.label}>Connected services</Text>
+                  <Text style={styles.statValue}>{live ? '1' : '0'}</Text>
+                </View>
+                <View style={styles.statRule} />
+                <View style={styles.stat}>
+                  <Text style={ui.label}>{snapshot ? 'Snapshot incidents' : 'Open incidents'}</Text>
+                  <View style={ui.row}>
+                    <Text style={styles.statValue}>{openIncidents}</Text>
+                    {openIncidents ? <Badge tone="danger">Needs attention</Badge> : null}
+                  </View>
+                </View>
+              </View>
+
+              <Card>
+                <View style={ui.between}>
+                  <View style={[ui.row, { flex: 1 }]}>
+                    <View style={styles.iconTile}>
+                      <Icon name="server" size={20} />
+                    </View>
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Text style={ui.title}>{bundle.serviceHealth.serviceName}</Text>
+                      <Text style={ui.mono}>{bundle.serviceHealth.version}</Text>
+                    </View>
+                  </View>
+                  <Badge tone={healthy ? 'success' : 'danger'} dot>
+                    {healthy
+                      ? 'Healthy'
+                      : bundle.serviceHealth.status === 'down'
+                        ? 'Down'
+                        : 'Degraded'}
+                  </Badge>
+                </View>
+                <View style={ui.divider} />
+                <View style={styles.checks}>
+                  {Object.entries(bundle.serviceHealth.checks).map(([name, status]) => (
+                    <View key={name} style={styles.check}>
+                      <View
+                        style={[
+                          styles.dot,
+                          {
+                            backgroundColor: status === 'healthy' ? colors.success : colors.danger,
+                          },
+                        ]}
+                      />
+                      <Text accessibilityLabel={name + ': ' + status} style={ui.label}>
+                        {name === 'api' ? 'API' : name.charAt(0).toUpperCase() + name.slice(1)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+                <Text style={styles.small}>
+                  {'Checked at ' +
+                    timeLabel(bundle.serviceHealth.checkedAt) +
+                    ' · Pull down to refresh'}
+                </Text>
+              </Card>
+
+              {!healthy ? (
+                <View style={styles.incident}>
+                  <View style={ui.between}>
+                    <Text style={ui.title}>Active incident</Text>
+                    <Badge tone={bundle.incident.severity === 'critical' ? 'danger' : 'warning'}>
+                      {bundle.incident.severity}
+                    </Badge>
+                  </View>
+                  <Text style={styles.incidentTitle}>{bundle.incident.title}</Text>
+                  <Text style={ui.label}>
+                    {'Started ' +
+                      timeLabel(bundle.incident.startedAt) +
+                      ' · ' +
+                      evidence.length +
+                      ' evidence items'}
+                  </Text>
+                </View>
+              ) : null}
+
+              <Card>
+                <View style={ui.between}>
+                  <View style={ui.row}>
+                    <Icon name="terminal" size={18} />
+                    <Text style={ui.title}>Local analysis</Text>
+                  </View>
+                  <Badge>
+                    {diagnosis
+                      ? diagnosis.mode === 'deterministic'
+                        ? 'Rule-based'
+                        : 'On-device'
+                      : 'On your phone'}
+                  </Badge>
+                </View>
+                {diagnosis ? (
+                  <>
+                    <Text selectable style={styles.finding}>
+                      {diagnosis.likelyCause ??
+                        (healthy ? 'No active incident detected.' : 'More evidence is needed.')}
+                    </Text>
+                    <Text selectable style={ui.body}>
+                      {diagnosis.summary}
+                    </Text>
+                    <View style={ui.row}>
+                      <Badge>{diagnosis.confidence + ' confidence'}</Badge>
+                      <Text style={ui.label}>{cited.size + ' cited items'}</Text>
+                    </View>
+                    {diagnosis.nextDiagnosticStep ? (
+                      <View style={styles.codeBlock}>
+                        <Text style={ui.title}>Next check</Text>
+                        <Text style={ui.body}>{diagnosis.nextDiagnosticStep}</Text>
+                      </View>
+                    ) : null}
+                    {diagnosis.alternativeCauses.map((cause, index) => (
+                      <View key={index} style={{ gap: 4 }}>
+                        <Text style={ui.label}>
+                          {'Alternative · ' + cause.confidence + ' confidence'}
+                        </Text>
+                        <Text style={ui.body}>{cause.statement}</Text>
+                      </View>
+                    ))}
+                    <View style={ui.row}>
+                      <Button
+                        label="View evidence"
+                        onPress={showEvidence}
+                        variant="outline"
+                        style={{ flex: 1 }}
+                      />
+                      <Button
+                        label="Reanalyze"
+                        onPress={() => void analyze()}
+                        disabled={busy}
+                        variant="ghost"
+                      />
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <Text style={ui.body}>
+                      {healthy
+                        ? 'Inspect the latest signals without sending your incident bundle to a cloud model.'
+                        : 'Correlate the timeline and find a likely cause, with evidence for every conclusion.'}
+                    </Text>
+                    <Button
+                      label={busy ? 'Working…' : 'Analyze incident'}
+                      onPress={() => void analyze()}
+                      disabled={busy}
+                      icon="terminal"
+                    />
+                    <Text style={styles.small}>
+                      Falls back to local rules when a model is unavailable.
+                    </Text>
+                  </>
+                )}
+              </Card>
+
+              {diagnosis?.proposedAction ? (
+                <Card>
+                  <View style={ui.between}>
+                    <Text style={ui.title}>Suggested action</Text>
+                    <Badge tone="warning">Approval required</Badge>
+                  </View>
+                  <Text style={styles.finding}>
+                    {diagnosis.proposedAction.type === 'TRIGGER_ROLLBACK_WORKFLOW'
+                      ? 'Rollback to ' + diagnosis.proposedAction.parameters.targetRelease
+                      : 'Run a fresh health check'}
+                  </Text>
+                  <Text style={ui.body}>{diagnosis.proposedAction.reason}</Text>
+                  <Text style={ui.body}>{'Risk: ' + diagnosis.proposedAction.risk}</Text>
+                  <Button
+                    label="Review action"
+                    icon="arrow"
+                    onPress={confirmAction}
+                    disabled={!canExecute}
+                  />
+                  {!canExecute ? (
+                    <Text style={ui.label}>
+                      {busy
+                        ? 'Wait for the current operation to finish.'
+                        : 'Refresh live data to enable actions.'}
+                    </Text>
+                  ) : null}
+                </Card>
+              ) : null}
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open incident evidence"
+                onPress={showEvidence}
+                style={({ pressed }) => [styles.linkRow, { opacity: pressed ? 0.6 : 1 }]}
+              >
+                <View style={ui.row}>
+                  <Icon name="activity" color={colors.textMuted} />
+                  <View>
+                    <Text style={ui.title}>Incident timeline</Text>
+                    <Text style={ui.label}>
+                      {evidence.length +
+                        (evidence.length === 1 ? ' signal collected' : ' signals collected')}
+                    </Text>
+                  </View>
+                </View>
+                <Icon name="chevron" size={16} color={colors.textMuted} />
+              </Pressable>
+
+              {demo ? (
+                <View style={styles.demoPanel}>
+                  <View style={ui.between}>
+                    <Text style={ui.title}>Demo sandbox</Text>
+                    <Badge>Isolated</Badge>
+                  </View>
+                  <Text style={ui.body}>Simulate a checkout failure to try the recovery flow.</Text>
+                  <View style={ui.row}>
+                    <Button
+                      label="Inject regression"
+                      variant="outline"
+                      onPress={() => void breakDemo()}
+                      disabled={busy || !healthy}
+                      style={{ flex: 1 }}
+                    />
+                    <Button
+                      label="Reset"
+                      variant="ghost"
+                      onPress={() => void restoreDemo()}
+                      disabled={busy}
+                    />
+                  </View>
+                </View>
+              ) : null}
+            </>
+          ) : null}
+
+          {tab === 'Activity' ? (
+            <>
+              <View accessibilityRole="tablist" style={styles.segmented}>
+                {(['Evidence', 'Actions', 'Saved'] as const).map((item) => (
+                  <Pressable
+                    key={item}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: activityTab === item }}
+                    onPress={() => setActivityTab(item)}
+                    style={[styles.segment, activityTab === item && styles.segmentSelected]}
+                  >
+                    <Text
+                      style={[styles.segmentText, activityTab === item && { color: colors.text }]}
+                    >
+                      {item}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              {activityTab === 'Evidence' ? (
+                <>
+                  <View style={ui.between}>
+                    <Text style={ui.label}>{evidence.length + ' events · oldest first'}</Text>
+                    <Badge>{cited.size + ' cited'}</Badge>
+                  </View>
+                  <View style={styles.evidenceList}>
+                    {evidence.length ? (
+                      evidence.map((event, index) => (
+                        <EvidenceItem
+                          key={event.id}
+                          event={event}
+                          index={index}
+                          cited={cited.has(event.id)}
+                        />
+                      ))
+                    ) : (
+                      <EmptyState
+                        title="No evidence yet"
+                        description="Refresh the service to collect the latest signals."
+                      />
+                    )}
+                  </View>
+                  <View style={ui.row}>
+                    <Button
+                      label="Export bundle"
+                      icon="upload"
+                      variant="outline"
+                      disabled={busy}
+                      onPress={() => void shareBundle()}
+                      style={{ flex: 1 }}
+                    />
+                    <Button
+                      label="Import JSON"
+                      icon="download"
+                      variant="outline"
+                      disabled={busy}
+                      onPress={() => void importFile()}
+                      style={{ flex: 1 }}
+                    />
+                  </View>
+                  <Text style={ui.label}>
+                    Exports are sanitized. Review the file before sharing.
+                  </Text>
+                </>
+              ) : null}
+              {activityTab === 'Actions' ? (
+                audit.length ? (
+                  audit.map((entry) => (
+                    <Card key={entry.requestId}>
+                      <View style={ui.between}>
+                        <Text style={ui.title}>{actionLabel(entry.action)}</Text>
+                        <Badge
+                          tone={
+                            entry.result.status === 'succeeded'
+                              ? 'success'
+                              : entry.result.status === 'failed'
+                                ? 'danger'
+                                : 'neutral'
+                          }
+                        >
+                          {entry.result.status}
+                        </Badge>
+                      </View>
+                      <Text style={ui.body}>{entry.result.message}</Text>
+                      <Text style={ui.mono}>
+                        {timeLabel(entry.result.startedAt) + ' · ' + entry.serviceId}
+                      </Text>
+                    </Card>
+                  ))
+                ) : (
+                  <EmptyState
+                    title="No actions yet"
+                    description="Approved health checks and recovery actions will appear here."
+                  />
+                )
+              ) : null}
+              {activityTab === 'Saved' ? (
+                history.length ? (
+                  <>
+                    {history.map((item) => (
+                      <Pressable
+                        key={item.incident.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={'Open saved incident: ' + item.incident.title}
+                        disabled={busy}
+                        onPress={() => {
+                          selectHistory(item);
+                          setTab('Overview');
+                        }}
+                        style={({ pressed }) => [ui.card, { opacity: busy || pressed ? 0.5 : 1 }]}
+                      >
+                        <View style={ui.between}>
+                          <Text style={[ui.title, { flex: 1 }]}>{item.incident.title}</Text>
+                          <Icon name="chevron" size={16} />
+                        </View>
+                        <Text style={ui.label}>{new Date(item.generatedAt).toLocaleString()}</Text>
+                        <Badge>{item.incident.status}</Badge>
+                      </Pressable>
+                    ))}
+                    <Button
+                      label="Clear saved history"
+                      variant="ghost"
+                      onPress={() => void clearCache()}
+                      disabled={busy}
+                    />
+                  </>
+                ) : (
+                  <EmptyState
+                    title="Nothing saved yet"
+                    description="Connected incidents are cached here for offline analysis."
+                  />
+                )
+              ) : null}
+            </>
+          ) : null}
+
+          {tab === 'Settings' ? (
+            <>
+              <Connections settings={settings} busy={busy} onSave={updateConnection} />
+              <Card>
+                <View style={ui.between}>
+                  <Text style={ui.title}>Data & privacy</Text>
+                  <Icon name="terminal" size={18} color={colors.textMuted} />
+                </View>
+                <Text style={ui.body}>
+                  Analysis stays on your phone. Provider credentials stay on your gateway, and its
+                  access token is stored securely on this device.
+                </Text>
+                <View style={ui.divider} />
+                <View style={ui.between}>
+                  <Text style={ui.label}>Saved snapshots</Text>
+                  <Text style={ui.title}>{history.length + ' / 10'}</Text>
+                </View>
+                <Button
+                  label="Clear saved history"
+                  variant="outline"
+                  disabled={busy || !history.length}
+                  onPress={() => void clearCache()}
+                />
+                <Text style={ui.label}>This does not delete exported files.</Text>
+              </Card>
+              {bundle.collection?.length ? (
+                <Card>
+                  <Text style={ui.title}>Evidence sources</Text>
+                  {bundle.collection.map((item) => (
+                    <View key={item.source} style={{ gap: 5 }}>
+                      <View style={ui.between}>
+                        <Text style={ui.title}>{item.source}</Text>
+                        <Badge tone={item.status === 'ok' ? 'success' : 'warning'}>
+                          {item.status}
+                        </Badge>
+                      </View>
+                      <Text style={ui.body}>{item.message}</Text>
+                    </View>
+                  ))}
+                </Card>
+              ) : null}
+              <Text style={[ui.label, { textAlign: 'center', paddingVertical: 8 }]}>
+                PocketSRE · Development build
+              </Text>
+            </>
+          ) : null}
+
+          {tab !== 'Settings'
+            ? bundle.collection
+                ?.filter((item) => item.status === 'unavailable')
+                .map((item) => (
+                  <View key={item.source} style={styles.notice}>
+                    <Text style={ui.body}>{item.source + ': ' + item.message}</Text>
+                  </View>
+                ))
+            : null}
+          <View accessibilityLiveRegion="polite" style={styles.statusLine}>
+            {busy ? (
+              <ActivityIndicator size="small" color={colors.textMuted} />
+            ) : (
+              <View style={[styles.dot, { backgroundColor: colors.textMuted }]} />
+            )}
+            <Text style={[ui.label, { flex: 1 }]}>{message}</Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      <View style={styles.navigation}>
+        {navigation.map((item) => (
+          <Pressable
+            key={item.label}
+            accessibilityRole="tab"
+            accessibilityLabel={item.label}
+            accessibilityState={{ selected: tab === item.label }}
+            onPress={() => setTab(item.label)}
+            style={({ pressed }) => [styles.navItem, { opacity: pressed ? 0.6 : 1 }]}
+          >
+            <View style={[styles.navIcon, tab === item.label && { backgroundColor: colors.muted }]}>
+              <Icon
+                name={item.icon}
+                size={20}
+                color={tab === item.label ? colors.text : colors.textMuted}
+              />
+            </View>
+            <Text
+              style={[
+                styles.navLabel,
+                tab === item.label && { color: colors.text, fontWeight: '600' },
+              ]}
+            >
+              {item.label}
+            </Text>
           </Pressable>
-        ) : null}
-        <Text style={styles.footer}>
-          Private by default · Evidence before action · Human in control
-        </Text>
-      </ScrollView>
+        ))}
+      </View>
     </SafeAreaView>
   );
 }
@@ -312,181 +708,157 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 20, paddingBottom: 48, gap: 14 },
-  topRow: {
+  safeArea: { flex: 1, backgroundColor: colors.surface },
+  topBar: {
+    paddingHorizontal: 20,
+    minHeight: 62,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    borderBottomWidth: 1,
+    borderColor: colors.border,
   },
-  eyebrow: { color: colors.accent, fontSize: 10, fontWeight: '800', letterSpacing: 1.6 },
-  brand: { color: colors.text, fontSize: 30, fontWeight: '800', letterSpacing: -1 },
-  connectionPill: {
-    flexDirection: 'row',
+  logo: {
+    width: 29,
+    height: 29,
+    borderRadius: 7,
+    backgroundColor: colors.primary,
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#252D2A',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 20,
+    justifyContent: 'center',
   },
-  connectionPillLive: { backgroundColor: colors.accentDark },
-  connectionDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.warning },
-  connectionDotLive: { backgroundColor: colors.accent },
-  connectionText: { color: colors.text, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
-  hero: { borderRadius: 24, padding: 20, borderWidth: 1, borderColor: colors.border },
-  heroTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-  heroLabel: { color: colors.textMuted, fontSize: 10, fontWeight: '700', letterSpacing: 1.2 },
-  serviceName: { color: colors.text, fontSize: 24, fontWeight: '700', marginTop: 4 },
-  statusBadge: {
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    alignSelf: 'flex-start',
+  brand: { color: colors.text, fontSize: 17, fontWeight: '600', letterSpacing: -0.5 },
+  content: {
+    flexGrow: 1,
+    backgroundColor: colors.background,
+    padding: 20,
+    paddingBottom: 24,
+    gap: 16,
   },
-  healthyBadge: { backgroundColor: '#173E2E' },
-  degradedBadge: { backgroundColor: '#4A2B1B' },
-  statusText: { fontSize: 10, fontWeight: '900', letterSpacing: 0.8 },
-  healthyText: { color: colors.accent },
-  degradedText: { color: colors.warning },
-  release: { color: colors.textMuted, fontSize: 13, marginTop: 4 },
-  checksRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 20 },
-  check: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  checkDot: { width: 7, height: 7, borderRadius: 4 },
-  checkText: { color: colors.textMuted, fontSize: 12, textTransform: 'capitalize' },
-  messageBar: {
-    flexDirection: 'row',
+  pageHeader: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 4 },
+  pageTitle: {
+    color: colors.text,
+    fontSize: 26,
+    lineHeight: 34,
+    letterSpacing: -0.8,
+    fontWeight: '600',
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
     alignItems: 'center',
-    gap: 10,
-    minHeight: 42,
+    justifyContent: 'center',
     backgroundColor: colors.surface,
-    borderRadius: 14,
-    paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  spark: { color: colors.accent, fontSize: 17 },
-  messageText: { color: colors.textMuted, fontSize: 12, flex: 1 },
-  actionsRow: { flexDirection: 'row', gap: 10 },
-  primaryButton: {
-    flex: 1,
-    backgroundColor: colors.accent,
-    padding: 14,
-    borderRadius: 14,
-    alignItems: 'center',
+  stats: { flexDirection: 'row', paddingBottom: 4, gap: 20 },
+  stat: { flex: 1, gap: 6 },
+  statRule: { width: 1, backgroundColor: colors.border, marginVertical: 3 },
+  statValue: {
+    fontSize: 27,
+    lineHeight: 34,
+    fontWeight: '600',
+    letterSpacing: -0.7,
+    color: colors.text,
   },
-  primaryButtonText: { color: colors.black, fontSize: 13, fontWeight: '800' },
-  secondaryButton: {
-    flex: 1,
-    backgroundColor: colors.surfaceRaised,
-    padding: 14,
-    borderRadius: 14,
+  iconTile: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: colors.muted,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checks: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
+  check: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dot: { width: 5, height: 5, borderRadius: 3 },
+  small: { color: colors.textMuted, fontSize: 10, lineHeight: 16 },
+  incident: {
+    gap: 10,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: colors.dangerMuted,
     borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  incidentTitle: {
+    color: colors.text,
+    fontWeight: '600',
+    fontSize: 16,
+    lineHeight: 23,
+    letterSpacing: -0.3,
+  },
+  finding: {
+    color: colors.text,
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: '600',
+    letterSpacing: -0.3,
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 60,
+    paddingVertical: 8,
+    gap: 12,
+  },
+  demoPanel: { gap: 10, backgroundColor: colors.muted, padding: 16, borderRadius: 10 },
+  notice: {
+    backgroundColor: colors.warningMuted,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FEF08A',
+  },
+  statusLine: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingTop: 2 },
+  navigation: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 5,
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
     borderColor: colors.border,
   },
-  secondaryButtonText: { color: colors.text, fontSize: 13, fontWeight: '700' },
-  sectionLabel: {
+  navItem: { flex: 1, alignItems: 'center', gap: 3, minHeight: 55 },
+  navIcon: {
+    width: 48,
+    height: 30,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navLabel: { fontSize: 10, lineHeight: 16, color: colors.textMuted },
+  segmented: { backgroundColor: colors.muted, borderRadius: 8, padding: 3, flexDirection: 'row' },
+  segment: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  segmentSelected: { backgroundColor: colors.surface, borderColor: colors.border },
+  segmentText: { fontSize: 12, lineHeight: 18, fontWeight: '500', color: colors.textMuted },
+  evidenceList: { borderTopWidth: 1, borderColor: colors.border },
+  evidenceRow: {
+    flexDirection: 'row',
+    gap: 14,
+    paddingVertical: 18,
+    borderBottomWidth: 1,
+    borderColor: colors.border,
+  },
+  eventNumber: {
+    width: 18,
+    fontFamily: 'monospace',
     color: colors.textMuted,
     fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.4,
-    marginTop: 10,
+    lineHeight: 18,
+    paddingTop: 1,
   },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 18,
-    padding: 17,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  cardTitleRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 16 },
-  incidentTitle: { color: colors.text, flex: 1, fontSize: 17, fontWeight: '700' },
-  severity: { color: colors.danger, fontSize: 10, fontWeight: '900', letterSpacing: 0.8 },
-  severityHealthy: { color: colors.accent },
-  muted: { color: colors.textMuted, fontSize: 12, marginTop: 8 },
-  diagnosisCard: {
-    backgroundColor: '#10241D',
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#2A6049',
-  },
-  confidenceRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
-  diagnosisMode: { color: colors.accent, fontSize: 9, fontWeight: '900', letterSpacing: 1 },
-  confidence: { color: colors.textMuted, fontSize: 9, fontWeight: '800', letterSpacing: 0.6 },
-  diagnosisTitle: {
-    color: colors.text,
-    fontSize: 19,
-    lineHeight: 25,
-    fontWeight: '700',
-    marginTop: 14,
-  },
-  body: { color: colors.textMuted, fontSize: 13, lineHeight: 19, marginTop: 8 },
-  evidenceHint: { color: colors.accent, fontSize: 11, fontWeight: '700', marginTop: 14 },
-  actionCard: {
-    backgroundColor: '#2A1E13',
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#644426',
-  },
-  actionEyebrow: { color: colors.warning, fontSize: 9, fontWeight: '900', letterSpacing: 1.1 },
-  actionTitle: { color: colors.text, fontSize: 18, fontWeight: '700', marginTop: 10 },
-  risk: { color: colors.warning, fontSize: 11, marginTop: 10 },
-  actionButton: {
-    backgroundColor: colors.warning,
-    borderRadius: 13,
-    padding: 13,
-    alignItems: 'center',
-    marginTop: 16,
-  },
-  actionButtonText: { color: colors.black, fontSize: 13, fontWeight: '800' },
-  sectionHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
-  shareText: { color: colors.accent, fontSize: 12, fontWeight: '700' },
-  timeline: { gap: 0 },
-  timelineItem: { flexDirection: 'row', gap: 10 },
-  timelineRail: { width: 16, alignItems: 'center' },
-  timelineDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: colors.border,
-    marginTop: 19,
-    zIndex: 1,
-  },
-  timelineDotCited: { backgroundColor: colors.accent },
-  timelineLine: { width: 1, flex: 1, backgroundColor: colors.border },
-  eventCard: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 10,
-  },
-  eventCardCited: { borderColor: '#337858' },
-  eventMeta: { flexDirection: 'row', justifyContent: 'space-between' },
-  source: {
-    color: colors.info,
-    fontSize: 10,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.7,
-  },
-  eventTime: { color: colors.textMuted, fontSize: 10 },
-  eventTitle: { color: colors.text, fontSize: 14, fontWeight: '700', marginTop: 8 },
-  eventExcerpt: { color: colors.textMuted, fontSize: 12, lineHeight: 17, marginTop: 5 },
-  cited: {
-    color: colors.accent,
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-    marginTop: 10,
-  },
-  resetButton: { alignItems: 'center', padding: 12 },
-  resetText: { color: colors.textMuted, fontSize: 12, textDecorationLine: 'underline' },
-  footer: { color: '#587067', fontSize: 10, textAlign: 'center', marginTop: 4 },
+  codeBlock: { backgroundColor: colors.muted, borderRadius: 6, padding: 12, gap: 6 },
+  empty: { paddingHorizontal: 24, paddingVertical: 40, alignItems: 'center', gap: 12 },
 });
