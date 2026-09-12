@@ -1,6 +1,7 @@
 import { createGatewayApp } from './app.js';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { loadPrivateGatewayEnvironment } from './environment.js';
 import { VercelProvider } from './providers.js';
 import { ExpoPushTransport } from './project-monitor.js';
 import { GitHubAccount } from './github-account.js';
@@ -14,8 +15,10 @@ import {
   type EvidenceConnector,
 } from './connectors.js';
 
-const port = Number(process.env.GATEWAY_PORT ?? 4100);
-const host = process.env.GATEWAY_HOST ?? '127.0.0.1';
+loadPrivateGatewayEnvironment();
+
+const port = Number(process.env.PORT ?? process.env.GATEWAY_PORT ?? 4100);
+const host = process.env.GATEWAY_HOST ?? (process.env.RENDER ? '0.0.0.0' : '127.0.0.1');
 if (host !== '127.0.0.1' && host !== 'localhost' && !process.env.GATEWAY_ACCESS_TOKEN) {
   throw new Error('GATEWAY_ACCESS_TOKEN is required when binding to the LAN.');
 }
@@ -66,6 +69,14 @@ const loadBundle =
         connectors,
       })
     : undefined;
+// Keep the synthetic demo private while serving the mobile API from one cloud process.
+const demo =
+  mode === 'demo' && process.env.POCKETSRE_EMBED_DEMO === '1'
+    ? (await import('@pocketsre/demo-service/app')).createDemoApp()
+    : undefined;
+const demoServiceUrl = demo
+  ? await demo.listen({ host: '127.0.0.1', port: 0 })
+  : process.env.DEMO_SERVICE_URL;
 const app = createGatewayApp({
   projects:
     process.env.GITHUB_APP_CLIENT_ID || process.env.GITHUB_PROJECTS_TOKEN
@@ -78,7 +89,9 @@ const app = createGatewayApp({
           store: new ProjectStore(resolve(process.env.PROJECTS_PATH ?? '.pocketsre-data/projects')),
           vercel: new VercelProvider(process.env.VERCEL_TOKEN, process.env.VERCEL_TEAM_ID),
           monitor: {
-            path: resolve(homedir(), '.pocketsre', `monitor-${port}.json`),
+            path: resolve(
+              process.env.MONITOR_PATH ?? resolve(homedir(), '.pocketsre', `monitor-${port}.json`),
+            ),
             push: new ExpoPushTransport(process.env.EXPO_PUSH_ACCESS_TOKEN),
           },
           fixToken: process.env.GITHUB_PROJECT_FIX_TOKEN,
@@ -102,10 +115,22 @@ const app = createGatewayApp({
         )
       : undefined,
   loadBundle,
-  demoServiceUrl: process.env.DEMO_SERVICE_URL,
+  demoServiceUrl,
   accessToken: process.env.GATEWAY_ACCESS_TOKEN,
   auditPath: resolve(process.env.AUDIT_PATH ?? '.pocketsre-data/actions.json'),
 });
+
+app.addHook('onClose', async () => {
+  await demo?.close();
+});
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(signal, () => {
+    void app.close().then(
+      () => process.exit(0),
+      () => process.exit(1),
+    );
+  });
+}
 
 try {
   await loadBundle?.initialize();

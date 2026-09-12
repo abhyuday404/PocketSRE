@@ -32,7 +32,7 @@ import { HISTORY_LIMITS, type SnapshotSource } from './storage/incidents';
 type Tab = 'Overview' | 'Activity' | 'Fixes' | 'Agent' | 'Settings' | 'Projects';
 type ActivityTab = 'Evidence' | 'Actions' | 'Saved';
 const navigation: { label: Tab; icon: IconName }[] = [
-  { label: 'Overview', icon: 'server' },
+  { label: 'Projects', icon: 'server' },
   { label: 'Activity', icon: 'activity' },
   { label: 'Fixes', icon: 'terminal' },
   { label: 'Agent', icon: 'terminal' },
@@ -45,10 +45,10 @@ const sourceLabels: Record<string, string> = {
   health: 'Health',
   database: 'Database',
   investigator: 'Investigation',
-  gateway: 'Gateway',
+  gateway: 'PocketSRE',
 };
 const snapshotLabels: Record<SnapshotSource, string> = {
-  gateway: 'Saved gateway',
+  gateway: 'Saved evidence',
   'imported-incident': 'Imported incident · offline',
   'imported-investigation': 'Imported investigation · offline',
   sample: 'Sample · offline',
@@ -62,7 +62,7 @@ const healthLabel = (status: string) =>
       : status === 'degraded'
         ? 'Degraded'
         : 'Unknown';
-const retentionLabel = `Keeps the newest ${HISTORY_LIMITS.perIncident} snapshots per incident, up to ${HISTORY_LIMITS.perScope} per gateway. Imports and samples each have a separate ${HISTORY_LIMITS.perScope}-snapshot limit. Older snapshots and their analyses expire together.`;
+const retentionLabel = `Keeps the newest ${HISTORY_LIMITS.perIncident} snapshots per incident, up to ${HISTORY_LIMITS.perScope} per server. Imports and samples each have a separate ${HISTORY_LIMITS.perScope}-snapshot limit. Older snapshots and their analyses expire together.`;
 const timeLabel = (timestamp: string) =>
   new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const actionLabel = (action: string) =>
@@ -179,8 +179,9 @@ function AppContent() {
     updateConnection,
     clearCache,
   } = state;
-  const [tab, setTab] = useState<Tab>('Overview');
+  const [tab, setTab] = useState<Tab>('Projects');
   const [agentProject, setAgentProject] = useState<TrackedProject | null>(null);
+  const [projectsVisit, setProjectsVisit] = useState(0);
   const [notificationProject, setNotificationProject] = useState<string | null>(null);
   const scroll = useRef<ScrollView>(null);
   useEffect(() => {
@@ -254,28 +255,32 @@ function AppContent() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl
-              refreshing={busy}
-              onRefresh={() => void refresh()}
-              tintColor={colors.primary}
-              colors={[colors.primary]}
-              progressBackgroundColor={colors.muted}
-            />
+            tab === 'Projects' ? undefined : (
+              <RefreshControl
+                refreshing={busy}
+                onRefresh={() => void refresh()}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+                progressBackgroundColor={colors.muted}
+              />
+            )
           }
         >
           <View style={styles.pageHeader}>
             <View style={{ flex: 1, gap: 4 }}>
               <View style={ui.between}>
                 <Text style={styles.eyebrow}>
-                  {tab === 'Overview'
-                    ? 'OPERATIONS / 01'
-                    : tab === 'Activity'
-                      ? 'INCIDENT LOG / 02'
-                      : tab === 'Fixes'
-                        ? 'CODE FIXES / 03'
-                        : tab === 'Agent'
-                          ? 'LOCAL AGENT / 04'
-                          : 'WORKSPACE / 05'}
+                  {tab === 'Projects'
+                    ? 'POCKETSRE / WORKSPACE'
+                    : tab === 'Overview'
+                      ? 'OPERATIONS / 01'
+                      : tab === 'Activity'
+                        ? 'INCIDENT LOG / 02'
+                        : tab === 'Fixes'
+                          ? 'CODE FIXES / 03'
+                          : tab === 'Agent'
+                            ? 'LOCAL AGENT / 04'
+                            : 'WORKSPACE / 05'}
                 </Text>
                 {tab !== 'Projects' ? (
                   <Badge dot tone={live ? 'neutral' : 'warning'}>
@@ -284,7 +289,7 @@ function AppContent() {
                 ) : null}
               </View>
               <Text accessibilityRole="header" style={styles.pageTitle}>
-                {tab}
+                {tab === 'Projects' ? 'Your workspace' : tab}
               </Text>
               <Text style={ui.body}>
                 {tab === 'Overview'
@@ -296,7 +301,7 @@ function AppContent() {
                       : tab === 'Agent'
                         ? 'Ask your model. Shape your repository.'
                         : tab === 'Projects'
-                          ? 'Your repositories and live endpoints.'
+                          ? 'Your projects. Their context. One place.'
                           : 'Connections and device storage.'}
               </Text>
             </View>
@@ -314,7 +319,7 @@ function AppContent() {
             ) : null}
           </View>
 
-          {snapshot ? (
+          {snapshot && tab !== 'Projects' ? (
             <View style={styles.notice}>
               <Text style={[ui.body, { color: colors.warning }]}>
                 {originLabel +
@@ -334,7 +339,7 @@ function AppContent() {
               </Text>
             </View>
           ) : null}
-          {historyNotice ? (
+          {historyNotice && tab !== 'Projects' ? (
             <View style={styles.notice}>
               <Text accessibilityLiveRegion="polite" style={ui.body}>
                 {historyNotice}
@@ -344,10 +349,12 @@ function AppContent() {
 
           {tab === 'Projects' ? (
             <>
-              <Button label="Back to Overview" variant="ghost" onPress={() => setTab('Overview')} />
               <Projects
-                key={`${settings.url}:${notificationProject ?? ''}`}
+                key={`${settings.url}:${settings.token}:${notificationProject ?? ''}:${projectsVisit}`}
                 initialProjectId={notificationProject}
+                onNavigate={() => scroll.current?.scrollTo({ y: 0, animated: false })}
+                onOpenSettings={() => setTab('Settings')}
+                onOpenDemo={() => setTab('Overview')}
                 onOpenAgent={(project) => {
                   setAgentProject(project);
                   setAgentMode('repository');
@@ -725,7 +732,7 @@ function AppContent() {
                     description={
                       live
                         ? 'Approved health checks and recovery actions will appear here.'
-                        : 'Refresh the gateway to load its action history. Reopen offline analyses under Saved.'
+                        : 'Refresh PocketSRE to load its action history. Reopen offline analyses under Saved.'
                     }
                   />
                 )
@@ -733,8 +740,7 @@ function AppContent() {
               {activityTab === 'Saved' ? (
                 <>
                   <Text style={ui.body}>
-                    Saved gateway evidence for the current connection, plus offline imports and
-                    samples.
+                    Saved evidence for this account, plus offline imports and samples.
                   </Text>
                   <Text selectable style={ui.mono}>
                     {settings.url}
@@ -795,7 +801,7 @@ function AppContent() {
                   ) : (
                     <EmptyState
                       title="Nothing saved here yet"
-                      description="Refresh a gateway or import evidence to save it for offline analysis."
+                      description="Refresh PocketSRE or import evidence to save it for offline analysis."
                     />
                   )}
                   <Button
@@ -805,8 +811,8 @@ function AppContent() {
                     disabled={busy || (!totalSaved && !historyNotice)}
                   />
                   <Text style={ui.label}>
-                    Clears snapshots, imports, samples and analyses for every gateway on this phone,
-                    including recovery copies. Exported files remain.
+                    Clears snapshots, imports, samples and analyses on this phone, including
+                    recovery copies. Exported files remain.
                   </Text>
                 </>
               ) : null}
@@ -838,7 +844,7 @@ function AppContent() {
             <View style={{ display: agentMode === 'repository' ? 'flex' : 'none', gap: 16 }}>
               {agentProject ? (
                 <ProjectAgent
-                  key={`${settings.url}:${agentProject.id}`}
+                  key={`${settings.url}:${agentProject.id}:${agentProject.sourcePaths.join(',')}`}
                   project={agentProject}
                   busy={busy}
                   generate={state.proposeFix}
@@ -904,7 +910,7 @@ function AppContent() {
                   <Icon name="terminal" size={18} color={colors.textMuted} />
                 </View>
                 <Text style={ui.body}>
-                  Analysis stays on your phone. Provider credentials stay on your gateway, and its
+                  Analysis stays on your phone. Provider credentials stay on the server, and its
                   access token is stored securely on this device.
                 </Text>
                 <View style={ui.divider} />
@@ -920,7 +926,7 @@ function AppContent() {
                   onPress={() => void clearCache()}
                 />
                 <Text style={ui.label}>
-                  Clears every gateway’s snapshots, offline imports, samples, analyses and recovery
+                  Clears all saved snapshots, offline imports, samples, analyses and recovery
                   copies. Exported files remain. Refreshing, importing or analyzing saves new data.
                 </Text>
               </Card>
@@ -955,14 +961,16 @@ function AppContent() {
                   </View>
                 ))
             : null}
-          <View accessibilityLiveRegion="polite" style={styles.statusLine}>
-            {busy ? (
-              <ActivityIndicator size="small" color={colors.textMuted} />
-            ) : (
-              <View style={[styles.dot, { backgroundColor: colors.textMuted }]} />
-            )}
-            <Text style={[ui.label, { flex: 1 }]}>{message}</Text>
-          </View>
+          {tab !== 'Projects' ? (
+            <View accessibilityLiveRegion="polite" style={styles.statusLine}>
+              {busy ? (
+                <ActivityIndicator size="small" color={colors.textMuted} />
+              ) : (
+                <View style={[styles.dot, { backgroundColor: colors.textMuted }]} />
+              )}
+              <Text style={[ui.label, { flex: 1 }]}>{message}</Text>
+            </View>
+          ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -981,7 +989,13 @@ function AppContent() {
             accessibilityRole="tab"
             accessibilityLabel={item.label}
             accessibilityState={{ selected: tab === item.label }}
-            onPress={() => setTab(item.label)}
+            onPress={() => {
+              if (item.label === 'Projects') {
+                setNotificationProject(null);
+                setProjectsVisit((value) => value + 1);
+              }
+              setTab(item.label);
+            }}
             style={({ pressed }) => [styles.navItem, { opacity: pressed ? 0.6 : 1 }]}
           >
             <View style={[styles.navIcon, tab === item.label && styles.navIconSelected]}>

@@ -2,6 +2,7 @@ import type { PropsWithChildren } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -12,6 +13,7 @@ import {
 import { colors } from '../theme';
 
 export type IconName =
+  | 'github'
   | 'terminal'
   | 'activity'
   | 'server'
@@ -25,6 +27,7 @@ export type IconName =
   | 'download';
 type Segment = [number, number, number, number];
 const paths: Record<IconName, Segment[]> = {
+  github: [],
   terminal: [
     [5, 7, 10, 12],
     [10, 12, 5, 17],
@@ -100,6 +103,14 @@ export function Icon({
   size?: number;
   color?: string;
 }) {
+  if (name === 'github')
+    return (
+      <Image
+        accessible={false}
+        source={require('../../assets/github-mark.png')}
+        style={{ width: size, height: size, borderRadius: size / 2 }}
+      />
+    );
   const d = (n: number) => (n * size) / 24;
   const box = (x: number, y: number, w: number, h: number, radius: number, key: string) => (
     <View

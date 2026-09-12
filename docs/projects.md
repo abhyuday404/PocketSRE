@@ -1,8 +1,21 @@
 # Projects, deployment logs, agent, and alerts
 
-Open **Overview → Your projects** or **Settings → Manage GitHub projects**. Connect GitHub, select repositories, and save a health endpoint for each. Open a project to link deployment logs, enable monitoring, or choose **Chat with this project's agent**.
+The app opens on **Projects**. Imported GitHub repositories appear in a horizontal carousel, with an **Add project** card at the end. Disconnected accounts see **Connect GitHub** with a bundled GitHub logo. A gateway without GitHub device-flow configuration explains the missing setup and links to connection settings.
+
+Choose **Add project**, search the repositories available to your GitHub account, and select **Import**. Importing opens that project's workspace immediately. Tap any existing project card to return to its settings:
+
+- **Health:** configure its endpoint and refresh incident evidence.
+- **Deployment:** connect Vercel and link this project's deployment and environment. The Vercel account connection is shared; deployment links are per project.
+- **Alerts:** configure background monitoring and this phone's notifications.
+- **Source files:** choose repository paths available for agent analysis.
+
+**Analyze with project agent** opens the agent with that repository and its saved source selection. **Back to projects** returns to the carousel. The original incident demo is available through **Explore the demo workspace**. **Settings** retains gateway, local model, and device-storage settings.
+
+Project cards show configuration state, not a claim of live health. Refresh the project's health or monitoring status to obtain an observation. Saved projects remain accessible when GitHub is disconnected; repository operations still require valid GitHub access.
 
 ## Gateway and GitHub setup
+
+The gateway also loads optional private configuration from `~/.pocketsre/gateway.env`. Keep gateway and provider credentials there, outside the checkout, with file permissions restricted to the owner. Existing process or service `.env` values take precedence.
 
 The gateway belongs to one owner. Its access token grants access to all connected accounts and projects; multi-user authorization is not implemented.
 

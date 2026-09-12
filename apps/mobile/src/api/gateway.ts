@@ -38,7 +38,7 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
       ...init,
       signal: controller.signal,
       headers: {
-        'content-type': 'application/json',
+        ...(init?.body != null ? { 'content-type': 'application/json' } : {}),
         ...(gatewayToken ? { authorization: `Bearer ${gatewayToken}` } : {}),
         ...init?.headers,
       },
