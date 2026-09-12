@@ -14,6 +14,7 @@ PocketSRE is a phone-first prototype that collects operational evidence, analyze
 - Read-only GitHub commits/patches and Sentry issues collected independently of health failures, with explicit unknown health and collection availability.
 - Laptop CLI for bundle checks and bounded repository environment-contract inspection.
 - On-device patch drafting with source review and an opt-in GitHub draft-PR action boundary. See [GitHub fixes](docs/github-fixes.md).
+- GitHub App device sign-in, paginated repository selection, saved projects, and separate HTTP availability checks in **Your projects**. See [project setup and current boundaries](docs/projects.md).
 
 ## Workspace
 
@@ -62,6 +63,8 @@ For Wi-Fi, follow [LAN connection setup](docs/connectors.md#lan-connection): ena
 
 ## Local AI
 
+For a short, hands-on presentation with a one-line regression and phone-approved local deployment, see the [five-minute demo](docs/five-minute-demo.md). Start its isolated services with `pnpm demo:reviewers`.
+
 Without a model, triage is deterministic and requires no download. To enable inference, use **Settings → Import GGUF model** on the phone. For development, a local `file://` URI in `EXPO_PUBLIC_MODEL_PATH` remains supported when no device model setting is saved. No model files belong in Git. The [GitHub fix flow](docs/github-fixes.md) uses the same local model for bounded patch drafting.
 
 Use **Agent** for free-form repository requests: explain code, add a small feature, or improve a function in selected existing files. Follow up in the conversation, review proposed edits, and approve a draft PR. A live gateway with GitHub fixes configured is required for source reads and publication. See the [Agent workflow and current limits](docs/github-fixes.md#agent-tab-repository-requests).
@@ -100,6 +103,8 @@ Set a strong `GATEWAY_ACCESS_TOKEN` in your shell or an untracked root `.env`, t
 
 ## Current limits
 
-Live mode monitors one configured service and permits health checks plus explicitly configured, reviewed GitHub draft PRs. Deployment-platform writes, database administration, background monitoring/push notifications, multi-user authorization, remote coding agents, automatic merging, and automatic deployment are not implemented. Demo evidence is deliberately synthetic; rollback changes the controlled service's state, not a real deployment. Model output and live provider permissions require device/account validation in addition to the mocked connector tests.
+The [Projects workflow](docs/projects.md) supports GitHub repository selection, Vercel log discovery, project-scoped agent requests, background availability checks, and an outage/recovery push pipeline. Actual Android push needs EAS/FCM credentials and a native rebuild. Vercel access and phone delivery still require live account/device validation. The original live-service mode remains available.
+
+Deployment-platform writes, database administration, multi-user authorization, remote coding agents, automatic merging, and automatic production deployment are not implemented. Approved agent edits create draft PRs; they do not change a PC checkout. Demo evidence is deliberately synthetic; rollback changes the controlled service's state. Model output and live provider permissions require device/account validation in addition to mocked connector tests.
 
 See [architecture](docs/architecture.md), [live connectors](docs/connectors.md), and [security boundaries](docs/security.md).

@@ -20,6 +20,7 @@ export function FixHarness({
   mode = 'fix',
   modelAvailable = true,
   onOpenSettings,
+  projectId,
 }: {
   incidentId: string;
   connected: boolean;
@@ -28,8 +29,20 @@ export function FixHarness({
   mode?: 'fix' | 'agent';
   modelAvailable?: boolean;
   onOpenSettings?: () => void;
+  projectId?: string;
 }) {
   const agent = mode === 'agent';
+  const api = {
+    config: () => (projectId ? fetchFixConfig(projectId) : fetchFixConfig()),
+    context: (incidentId: string, paths: string[], task?: AgentTask) =>
+      projectId
+        ? fetchFixContext(incidentId, paths, task, projectId)
+        : fetchFixContext(incidentId, paths, task),
+    prepare: (contextId: string, proposal: FixProposal) =>
+      projectId ? prepareFix(contextId, proposal, projectId) : prepareFix(contextId, proposal),
+    publish: (approval: { draftId: string; requestId: string; approvedAt: string }) =>
+      projectId ? publishFix(approval, projectId) : publishFix(approval),
+  };
   const [request, setRequest] = useState('');
   const [conversation, setConversation] = useState<AgentTask['history']>([]);
   const [activeRequest, setActiveRequest] = useState('');
@@ -47,7 +60,8 @@ export function FixHarness({
   useEffect(() => {
     mounted.current = true;
     if (connected)
-      void fetchFixConfig()
+      void api
+        .config()
         .then((value) => {
           if (mounted.current) setConfig(value);
         })
@@ -57,7 +71,7 @@ export function FixHarness({
     return () => {
       mounted.current = false;
     };
-  }, [connected]);
+  }, [connected, projectId]);
   async function run(work: () => Promise<void>) {
     if (lock.current || !mounted.current) return;
     lock.current = true;
@@ -76,16 +90,17 @@ export function FixHarness({
     }
   }
   const disabled = busy || working || !connected;
+  const localDemo = (draft?.delivery ?? config?.delivery) === 'local-demo';
   const awaitingResult = !result || result.status === 'running' || result.status === 'accepted';
   function publish() {
     if (!draft || disabled) return;
     Alert.alert(
-      'Create this draft pull request?',
-      `Repository: ${draft.repository}\nBase: ${draft.baseBranch} at ${draft.baseCommit.slice(0, 12)}\nFiles: ${draft.changes.map((change) => change.path).join(', ')}\n\nThe exact changes shown below will be published. Tests have not been run. Repository CI may run; PocketSRE will not merge or deploy the PR.`,
+      localDemo ? 'Deploy this fix to the local demo?' : 'Create this draft pull request?',
+      `Repository: ${draft.repository}\nBase: ${draft.baseBranch} at ${draft.baseCommit.slice(0, 12)}\nFiles: ${draft.changes.map((change) => change.path).join(', ')}\n\n${localDemo ? 'The gateway will test this exact patch, replace checkout.mjs in the isolated running demo, and verify live HTTP health and checkout results. This does not deploy to a cloud service.' : 'The exact changes shown below will be published. Tests have not been run. Repository CI may run; PocketSRE will not merge or deploy the PR.'}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Create draft PR',
+          text: localDemo ? 'Test and deploy' : 'Create draft PR',
           onPress: () => {
             if (
               !mounted.current ||
@@ -100,8 +115,12 @@ export function FixHarness({
                 approvedAt: new Date().toISOString(),
               };
             void run(async () => {
-              setMessage('Publishing the approved patch…');
-              const published = await publishFix(approval.current!);
+              setMessage(
+                localDemo
+                  ? 'Testing, deploying and verifying the demo fix…'
+                  : 'Publishing the approved patch…',
+              );
+              const published = await api.publish(approval.current!);
               if (mounted.current) {
                 setResult(published);
                 setMessage(published.message);
@@ -114,16 +133,62 @@ export function FixHarness({
   }
   return (
     <>
+      {agent && (conversation.length || activeRequest) ? (
+        <Card>
+          <Text style={ui.title}>Conversation</Text>
+          {conversation.map((turn, index) => (
+            <View
+              key={index}
+              style={{
+                gap: 8,
+                padding: 14,
+                borderRadius: 16,
+                alignSelf: turn.role === 'user' ? 'flex-end' : 'stretch',
+                maxWidth: turn.role === 'user' ? '90%' : '100%',
+                backgroundColor: turn.role === 'user' ? colors.muted : 'transparent',
+              }}
+            >
+              <Badge tone={turn.role === 'user' ? 'neutral' : 'warning'}>
+                {turn.role === 'user' ? 'You' : 'Local agent'}
+              </Badge>
+              <Text selectable style={ui.body}>
+                {turn.content}
+              </Text>
+            </View>
+          ))}
+          {activeRequest ? <Text style={ui.body}>You: {activeRequest}</Text> : null}
+          <Text style={ui.label}>
+            Kept for this app session. The latest two exchanges accompany follow-ups; proposed edits
+            are not applied until merged through GitHub.
+          </Text>
+          <Button
+            label="New conversation"
+            variant="ghost"
+            disabled={disabled || !!draft}
+            onPress={() => {
+              setConversation([]);
+              setRequest('');
+              setMessage('');
+            }}
+          />
+        </Card>
+      ) : null}
       <Card>
         <Text style={ui.title}>
-          {agent ? 'Your repository assistant' : 'Local AI → GitHub pull request'}
+          {localDemo
+            ? 'Local AI → running demo fix'
+            : agent
+              ? 'Your repository assistant'
+              : 'Local AI → GitHub pull request'}
         </Text>
         <Text style={ui.body}>
-          {agent
-            ? 'Ask about your code, request a feature, or improve an existing flow. The model runs on this phone and prepares changes for your review.'
-            : 'Read a few relevant files, draft a fix on your phone, review the exact changes, then create a draft PR.'}
+          {localDemo
+            ? 'Draft a patch on your phone, review the changed line, then test and deploy it to the isolated checkout demo on your laptop.'
+            : agent
+              ? 'Ask about your code, request a feature, or improve an existing flow. The model runs on this phone and prepares changes for your review.'
+              : 'Read a few relevant files, draft a fix on your phone, review the exact changes, then create a draft PR.'}
         </Text>
-        {agent ? (
+        {agent && !localDemo ? (
           <Text style={ui.label}>
             Works with up to three selected existing files. Reads and PRs need a connection. Code is
             not executed or tested here.
@@ -156,7 +221,7 @@ export function FixHarness({
               disabled={disabled}
               onPress={() =>
                 void run(async () => {
-                  const value = await fetchFixConfig();
+                  const value = await api.config();
                   if (mounted.current) {
                     setConfig(value);
                     setMessage(
@@ -201,7 +266,7 @@ export function FixHarness({
                     <Text style={ui.label}>Your request</Text>
                     <TextInput
                       accessibilityLabel="Agent request"
-                      placeholder="Add input validation to the checkout endpoint…"
+                      placeholder="Ask about this project or describe a change…"
                       placeholderTextColor={colors.textMuted}
                       multiline
                       textAlignVertical="top"
@@ -244,7 +309,7 @@ export function FixHarness({
                       if (agent) setActiveRequest(userRequest);
                       setResult(null);
                       setMessage('Reading repository source…');
-                      const context = await fetchFixContext(
+                      const context = await api.context(
                         incidentId,
                         paths,
                         agent
@@ -260,7 +325,7 @@ export function FixHarness({
                       const proposal = await generate(context);
                       if (!mounted.current) return;
                       const prepared = proposal.edits.length
-                        ? await prepareFix(context.id, proposal)
+                        ? await api.prepare(context.id, proposal)
                         : null;
                       if (mounted.current) {
                         setDraft(prepared);
@@ -295,36 +360,6 @@ export function FixHarness({
           </>
         )}
       </Card>
-      {agent && (conversation.length || activeRequest) ? (
-        <Card>
-          <Text style={ui.title}>Conversation</Text>
-          {conversation.map((turn, index) => (
-            <View key={index} style={{ gap: 6 }}>
-              <Badge tone={turn.role === 'user' ? 'neutral' : 'warning'}>
-                {turn.role === 'user' ? 'You' : 'Local agent'}
-              </Badge>
-              <Text selectable style={ui.body}>
-                {turn.content}
-              </Text>
-            </View>
-          ))}
-          {activeRequest ? <Text style={ui.body}>You: {activeRequest}</Text> : null}
-          <Text style={ui.label}>
-            Kept for this app session. The latest two exchanges accompany follow-ups; proposed edits
-            are not applied until merged through GitHub.
-          </Text>
-          <Button
-            label="New conversation"
-            variant="ghost"
-            disabled={disabled || !!draft}
-            onPress={() => {
-              setConversation([]);
-              setRequest('');
-              setMessage('');
-            }}
-          />
-        </Card>
-      ) : null}
       {draft ? (
         <Card>
           <Text style={ui.title}>{agent ? 'Review proposed changes' : 'Review proposed fix'}</Text>
@@ -335,7 +370,11 @@ export function FixHarness({
           <Text selectable style={ui.label}>
             Evidence: {draft.proposal.evidenceIds.join(', ')}
           </Text>
-          <Badge>Tests not run</Badge>
+          <Badge>
+            {result?.status === 'succeeded' && localDemo
+              ? 'Tests and live probes passed'
+              : 'Tests not run'}
+          </Badge>
           {draft.proposal.edits.map((edit, index) => (
             <View key={index} style={{ gap: 8 }}>
               <Text selectable style={ui.title}>
@@ -355,15 +394,29 @@ export function FixHarness({
               </Text>
             </View>
           ))}
-          {awaitingResult ? (
+          {config?.canPublish === false ? (
+            <Text style={ui.body}>
+              This project has read-only source access. The patch is ready for review; a separate PR
+              credential is required to publish it.
+            </Text>
+          ) : null}
+          {awaitingResult && config?.canPublish !== false ? (
             <Button
-              label={approval.current ? 'Check publication result' : 'Create draft pull request'}
+              label={
+                approval.current
+                  ? localDemo
+                    ? 'Check deployment result'
+                    : 'Check publication result'
+                  : localDemo
+                    ? 'Deploy demo fix'
+                    : 'Create draft pull request'
+              }
               disabled={disabled}
               onPress={
                 approval.current
                   ? () =>
                       void run(async () => {
-                        const published = await publishFix(approval.current!);
+                        const published = await api.publish(approval.current!);
                         if (mounted.current) {
                           setResult(published);
                           setMessage(published.message);

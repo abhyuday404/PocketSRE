@@ -187,6 +187,28 @@ it('shows exact edits, then requires the separate approval before publishing', a
   expect(button('Open pull request')).toBeDefined();
 });
 
+it('labels and approves isolated demo deployment without claiming a GitHub PR', async () => {
+  api.config.mockResolvedValue({
+    enabled: true,
+    repository: 'local-demo/reviewer-checkout',
+    paths: ['src/server.ts'],
+    delivery: 'local-demo',
+  });
+  api.prepare.mockResolvedValue({ ...draft, delivery: 'local-demo' });
+  api.publish.mockResolvedValue({ status: 'succeeded', message: 'Demo fix deployed.' });
+  generate.mockResolvedValue(proposal);
+  await mount();
+  await compose();
+  await send();
+  expect(api.publish).not.toHaveBeenCalled();
+  await act(async () => button('Deploy demo fix').props.onPress());
+  expect(api.alert.mock.calls[0]![0]).toBe('Deploy this fix to the local demo?');
+  expect(api.alert.mock.calls[0]![2][1].text).toBe('Test and deploy');
+  await act(async () => api.alert.mock.calls[0]![2][1].onPress());
+  expect(JSON.stringify(renderer!.toJSON())).toContain('Tests and live probes passed');
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('Open pull request');
+});
+
 it('invalidates an open approval dialog when its reviewed draft is cleared', async () => {
   generate.mockResolvedValue(proposal);
   await mount();

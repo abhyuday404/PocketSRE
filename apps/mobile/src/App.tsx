@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -14,19 +14,22 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { EvidenceEvent } from '@pocketsre/contracts';
+import type { EvidenceEvent, TrackedProject } from '@pocketsre/contracts';
 import { chronologicalEvidence } from '@pocketsre/incident-engine';
 import { useIncident } from './hooks/useIncident';
 import { Connections } from './components/Connections';
 import { FixHarness } from './components/FixHarness';
 import { TempChat } from './components/TempChat';
+import { Projects } from './components/Projects';
+import { ProjectAgent } from './components/ProjectAgent';
+import { listenForProjectNotifications } from './notifications';
 import { LocalModel } from './components/LocalModel';
 import { loadModelPath } from './settings/model';
 import { Aurora, Badge, Button, Card, Icon, ui, type IconName } from './components/ui';
 import { colors } from './theme';
 import { HISTORY_LIMITS, type SnapshotSource } from './storage/incidents';
 
-type Tab = 'Overview' | 'Activity' | 'Fixes' | 'Agent' | 'Settings';
+type Tab = 'Overview' | 'Activity' | 'Fixes' | 'Agent' | 'Settings' | 'Projects';
 type ActivityTab = 'Evidence' | 'Actions' | 'Saved';
 const navigation: { label: Tab; icon: IconName }[] = [
   { label: 'Overview', icon: 'server' },
@@ -67,9 +70,11 @@ const actionLabel = (action: string) =>
     ? 'Rollback'
     : action === 'RUN_HEALTH_CHECK'
       ? 'Health check'
-      : action === 'CREATE_GITHUB_PULL_REQUEST'
-        ? 'GitHub pull request'
-        : 'Issue creation';
+      : action === 'DEPLOY_DEMO_FIX'
+        ? 'Demo deployment'
+        : action === 'CREATE_GITHUB_PULL_REQUEST'
+          ? 'GitHub pull request'
+          : 'Issue creation';
 
 function EvidenceItem({
   event,
@@ -175,6 +180,36 @@ function AppContent() {
     clearCache,
   } = state;
   const [tab, setTab] = useState<Tab>('Overview');
+  const [agentProject, setAgentProject] = useState<TrackedProject | null>(null);
+  const [notificationProject, setNotificationProject] = useState<string | null>(null);
+  const scroll = useRef<ScrollView>(null);
+  useEffect(() => {
+    scroll.current?.scrollTo({ y: 0, animated: false });
+  }, [tab]);
+  useEffect(() => {
+    setAgentProject(null);
+    setNotificationProject(null);
+  }, [settings.url, settings.token]);
+  useEffect(() => {
+    if (!settings.url) return;
+    let active = true;
+    let remove: (() => void) | undefined;
+    void listenForProjectNotifications((projectId) => {
+      if (active) {
+        setNotificationProject(projectId);
+        setTab('Projects');
+      }
+    })
+      .then((cleanup) => {
+        if (active) remove = cleanup;
+        else cleanup();
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      remove?.();
+    };
+  }, [settings.url]);
   const [activityTab, setActivityTab] = useState<ActivityTab>('Evidence');
   const [agentMode, setAgentMode] = useState<'repository' | 'chat'>('repository');
   const evidence = chronologicalEvidence(bundle);
@@ -213,7 +248,7 @@ function AppContent() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
-          key={tab}
+          ref={scroll}
           style={{ flex: 1 }}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
@@ -242,9 +277,11 @@ function AppContent() {
                           ? 'LOCAL AGENT / 04'
                           : 'WORKSPACE / 05'}
                 </Text>
-                <Badge dot tone={live ? 'neutral' : 'warning'}>
-                  {originLabel}
-                </Badge>
+                {tab !== 'Projects' ? (
+                  <Badge dot tone={live ? 'neutral' : 'warning'}>
+                    {originLabel}
+                  </Badge>
+                ) : null}
               </View>
               <Text accessibilityRole="header" style={styles.pageTitle}>
                 {tab}
@@ -258,7 +295,9 @@ function AppContent() {
                       ? 'Review a local AI patch before opening a PR.'
                       : tab === 'Agent'
                         ? 'Ask your model. Shape your repository.'
-                        : 'Connections and device storage.'}
+                        : tab === 'Projects'
+                          ? 'Your repositories and live endpoints.'
+                          : 'Connections and device storage.'}
               </Text>
             </View>
             {tab === 'Overview' ? (
@@ -283,7 +322,7 @@ function AppContent() {
               </Text>
             </View>
           ) : null}
-          {tab !== 'Settings' ? (
+          {tab !== 'Settings' && tab !== 'Projects' ? (
             <View style={{ gap: 4 }}>
               <Text style={ui.label}>{'Evidence generated ' + dateLabel(bundle.generatedAt)}</Text>
               <Text style={ui.label}>
@@ -303,6 +342,28 @@ function AppContent() {
             </View>
           ) : null}
 
+          {tab === 'Projects' ? (
+            <>
+              <Button label="Back to Overview" variant="ghost" onPress={() => setTab('Overview')} />
+              <Projects
+                key={`${settings.url}:${notificationProject ?? ''}`}
+                initialProjectId={notificationProject}
+                onOpenAgent={(project) => {
+                  setAgentProject(project);
+                  setAgentMode('repository');
+                  setTab('Agent');
+                }}
+              />
+            </>
+          ) : null}
+          {tab === 'Overview' ? (
+            <Button
+              label="Your projects"
+              variant="outline"
+              disabled={busy}
+              onPress={() => setTab('Projects')}
+            />
+          ) : null}
           {tab === 'Overview' ? (
             <>
               <View style={styles.stats}>
@@ -775,16 +836,43 @@ function AppContent() {
               />
             </View>
             <View style={{ display: agentMode === 'repository' ? 'flex' : 'none', gap: 16 }}>
-              <FixHarness
-                key={`agent:${settings.url}:${settings.token}:${modelPath ?? ''}`}
-                mode="agent"
-                incidentId={bundle.incident.id}
-                connected={live && mode === 'live'}
-                busy={busy}
-                modelAvailable={!!(modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH)}
-                generate={state.proposeFix}
-                onOpenSettings={() => setTab('Settings')}
-              />
+              {agentProject ? (
+                <ProjectAgent
+                  key={`${settings.url}:${agentProject.id}`}
+                  project={agentProject}
+                  busy={busy}
+                  generate={state.proposeFix}
+                  modelPath={modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH}
+                  onModelChange={setModelPath}
+                  onOpenSettings={() => setTab('Settings')}
+                  onChangeProject={() => {
+                    setNotificationProject(null);
+                    setTab('Projects');
+                  }}
+                />
+              ) : (
+                <>
+                  <Button
+                    label="Choose a project for the agent"
+                    variant="outline"
+                    disabled={busy}
+                    onPress={() => {
+                      setNotificationProject(null);
+                      setTab('Projects');
+                    }}
+                  />
+                  <FixHarness
+                    key={`agent:${settings.url}:${settings.token}:${modelPath ?? ''}`}
+                    mode="agent"
+                    incidentId={bundle.incident.id}
+                    connected={live && mode === 'live'}
+                    busy={busy}
+                    modelAvailable={!!(modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH)}
+                    generate={state.proposeFix}
+                    onOpenSettings={() => setTab('Settings')}
+                  />
+                </>
+              )}
             </View>
             <View style={{ display: agentMode === 'chat' ? 'flex' : 'none', gap: 16 }}>
               <TempChat
@@ -799,6 +887,12 @@ function AppContent() {
           {tab === 'Settings' ? (
             <>
               <Connections settings={settings} busy={busy} onSave={updateConnection} />
+              <Button
+                label="Manage GitHub projects"
+                variant="outline"
+                disabled={busy}
+                onPress={() => setTab('Projects')}
+              />
               <LocalModel
                 path={modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH}
                 busy={busy}
@@ -852,7 +946,7 @@ function AppContent() {
             </>
           ) : null}
 
-          {tab !== 'Settings'
+          {tab !== 'Settings' && tab !== 'Projects'
             ? bundle.collection
                 ?.filter((item) => item.status === 'unavailable')
                 .map((item) => (
