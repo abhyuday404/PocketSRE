@@ -1,4 +1,5 @@
 import type { PropsWithChildren } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   ActivityIndicator,
   Pressable,
@@ -227,8 +228,64 @@ export function Badge({
   );
 }
 
-export function Card({ children, style }: PropsWithChildren<{ style?: StyleProp<ViewStyle> }>) {
-  return <View style={[ui.card, style]}>{children}</View>;
+/** Decorative native light layers keep the aurora available offline on every screen. */
+export function Aurora({ subtle = false }: { subtle?: boolean }) {
+  return (
+    <View
+      pointerEvents="none"
+      accessible={false}
+      style={[StyleSheet.absoluteFill, { overflow: 'hidden', opacity: subtle ? 0.45 : 1 }]}
+    >
+      <LinearGradient
+        colors={['#B957302B', '#F5A15B14', '#0C0A0900']}
+        start={{ x: 1, y: 0 }}
+        end={{ x: 0.1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={['#FFB56B00', '#EE763F12', '#FFB87540', '#FFD4A51C', '#FFB56B00']}
+        locations={[0, 0.3, 0.5, 0.65, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0.9, y: 1 }}
+        style={{
+          position: 'absolute',
+          width: '150%',
+          height: 330,
+          right: '-40%',
+          top: -140,
+          borderRadius: 180,
+          transform: [{ rotate: '-28deg' }],
+        }}
+      />
+      <LinearGradient
+        colors={['#FFAD7200', '#D56B4820', '#FFD09B30', '#FFAD7200']}
+        start={{ x: 0.2, y: 0 }}
+        end={{ x: 0.8, y: 1 }}
+        style={{
+          position: 'absolute',
+          width: '130%',
+          height: 230,
+          left: '-45%',
+          top: -95,
+          borderRadius: 160,
+          transform: [{ rotate: '-32deg' }],
+        }}
+      />
+    </View>
+  );
+}
+
+export function Card({
+  children,
+  style,
+  aurora = false,
+}: PropsWithChildren<{ style?: StyleProp<ViewStyle>; aurora?: boolean }>) {
+  return (
+    <View style={[ui.card, style]}>
+      {aurora ? <Aurora /> : null}
+      {children}
+    </View>
+  );
 }
 
 export const ui = StyleSheet.create({
@@ -236,12 +293,19 @@ export const ui = StyleSheet.create({
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    gap: 14,
+    borderRadius: 24,
+    padding: 20,
+    overflow: 'hidden',
+    gap: 16,
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  between: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  between: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
   title: {
     fontSize: 15,
     lineHeight: 21,
@@ -249,15 +313,15 @@ export const ui = StyleSheet.create({
     color: colors.text,
     letterSpacing: -0.2,
   },
-  body: { fontSize: 13, lineHeight: 20, color: colors.textMuted },
+  body: { fontSize: 14, lineHeight: 22, color: colors.textMuted },
   label: { fontSize: 12, lineHeight: 18, color: colors.textMuted },
   mono: { fontFamily: 'monospace', fontSize: 11, lineHeight: 17, color: colors.textMuted },
   divider: { height: 1, backgroundColor: colors.border },
   button: {
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    borderRadius: 8,
+    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderRadius: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -268,8 +332,8 @@ export const ui = StyleSheet.create({
   outline: { backgroundColor: colors.surface, borderColor: colors.border },
   ghost: { borderColor: 'transparent', backgroundColor: 'transparent' },
   buttonText: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '600',
     flexShrink: 1,
     textAlign: 'center',
@@ -279,10 +343,10 @@ export const ui = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'flex-start',
     gap: 5,
-    borderRadius: 5,
-    paddingHorizontal: 7,
+    borderRadius: 20,
+    paddingHorizontal: 9,
     paddingVertical: 3,
     flexShrink: 0,
   },
-  badgeText: { fontSize: 10, lineHeight: 14, fontWeight: '500' },
+  badgeText: { fontSize: 11, lineHeight: 16, fontWeight: '500' },
 });
