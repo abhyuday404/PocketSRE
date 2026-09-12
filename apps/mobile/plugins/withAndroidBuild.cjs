@@ -12,21 +12,40 @@ function configureNativeWorkers(contents) {
   const marker = '// @generated begin pocketsre-native-workers';
   const terminator = '// @generated end pocketsre-native-workers';
   const previous = new RegExp(`${marker}[\\s\\S]*?${terminator}\\n?`, 'g');
-  return `${contents.replace(previous, '').trimEnd()}\n\n${marker}
+  const base = contents.replace(previous, '').trimEnd();
+  const block = `${marker}
 // Gradle workers do not cap Ninja's separate compiler pool. Apply one shared
 // compile/link pool to the app and native libraries, including llama.rn's JNI.
 subprojects { nativeProject ->
     ['com.android.application', 'com.android.library'].each { pluginId ->
         nativeProject.plugins.withId(pluginId) {
-            nativeProject.extensions.getByName('android').defaultConfig.externalNativeBuild.cmake.arguments(
-                '-DCMAKE_JOB_POOLS=pocketsre_native=1',
-                '-DCMAKE_JOB_POOL_COMPILE=pocketsre_native',
-                '-DCMAKE_JOB_POOL_LINK=pocketsre_native'
-            )
+            // Apply the pool to the finalized Android DSL, alongside React Native's
+            // native configuration, so it reaches the generated CMake arguments.
+            nativeProject.extensions.getByName('androidComponents').finalizeDsl { androidDsl ->
+                // pnpm's dependency paths can exceed Ninja's Windows path limit.
+                androidDsl.externalNativeBuild.cmake.buildStagingDirectory =
+                    rootProject.file('.cxx/pocketsre/' + nativeProject.path.replace(':', '_'))
+                androidDsl.defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                    '-DCMAKE_JOB_POOLS=pocketsre_native=1',
+                    '-DCMAKE_JOB_POOL_COMPILE=pocketsre_native',
+                    '-DCMAKE_JOB_POOL_LINK=pocketsre_native'
+                ])
+            }
         }
     }
 }
-${terminator}\n`;
+${terminator}`;
+  // ReactRootProjectPlugin evaluates :app eagerly. Register before root plugins
+  // are applied, otherwise only library modules receive the finalized DSL hook.
+  const anchor = base.search(/^apply plugin:/m);
+  return (
+    (anchor < 0
+      ? [base, block]
+      : [base.slice(0, anchor).trimEnd(), block, base.slice(anchor).trimStart()]
+    )
+      .filter(Boolean)
+      .join('\n\n') + '\n'
+  );
 }
 
 function configureGradle(contents, profile) {

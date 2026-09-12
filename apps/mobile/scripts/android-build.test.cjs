@@ -135,6 +135,9 @@ test('native compiler and linker share a bounded pool across app and library pro
   const generated = configureNativeWorkers('apply plugin: "expo-root-project"\n');
   assert.match(generated, /com.android.application/);
   assert.match(generated, /com.android.library/);
+  assert.match(generated, /androidComponents.*finalizeDsl/);
+  assert.match(generated, /buildStagingDirectory =\s+rootProject.file\('\.cxx\/pocketsre\//);
+  assert.ok(generated.indexOf('subprojects {') < generated.indexOf('apply plugin:'));
   assert.match(generated, /CMAKE_JOB_POOLS=pocketsre_native=1/);
   assert.match(generated, /CMAKE_JOB_POOL_COMPILE=pocketsre_native/);
   assert.match(generated, /CMAKE_JOB_POOL_LINK=pocketsre_native/);

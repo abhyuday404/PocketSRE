@@ -82,6 +82,12 @@ one workspace and one Vitest worker at a time. Lowering worker counts does not r
 the need for several GB of available **commit memory** for Java, Node and the compiler.
 Free physical RAM alone does not establish enough capacity on Windows.
 
+The native pool is applied through Android's finalized DSL. CMake staging lives
+under the generated `apps/mobile/android/.cxx/pocketsre/` directory, with a separate
+subdirectory per Gradle project. This keeps generated prefab and Ninja files out of
+pnpm's deeply nested dependency paths. See Android's [DSL lifecycle](https://developer.android.com/build/extend-agp)
+and [CMake staging configuration](https://developer.android.com/reference/tools/gradle-api/8.0/com/android/build/api/dsl/Cmake).
+
 For the pinned pnpm 11.24.0, also set `$env:PNPM_WORKERS = '1000'` in PowerShell
 (or `export PNPM_WORKERS=1000` in Bash) before installation. pnpm interprets this as
 CPUs to reserve, which reduces its separate package-import pool to one worker; a
@@ -223,6 +229,16 @@ or explicitly clear only its test app data when a fresh first launch is required
    Optional inference and GPU/NPU performance need their own exact-device/model test.
 
 ## Validation record for this change
+
+Latest project-integration validation on 2026-09-12: the ARM64 development APK
+compiled successfully after fixing hook registration before React Native's eager
+app evaluation, applying the pool through finalized DSL, and shortening CMake
+staging paths. The app and native-library Ninja files were inspected for the
+one-job pool. The final `:app:assembleDebug` run passed in 2m47s, with 350 tasks
+(10 executed, 340 up-to-date), using a 768 MB Gradle heap and 384 MB metaspace.
+The APK and SHA-256 checksum are in `artifacts/android/`. This is compilation
+validation; the new APK was not installed or smoke-tested on a phone, and real
+push delivery still needs EAS/FCM configuration. Earlier attempts are recorded below.
 
 On 2026-09-12, the Windows worktree used Node 22.14.0, pnpm 11.24.0, Temurin
 21.0.7, SDK 36/Build Tools 36.0.0, and NDK 27.1.12297006. Frozen dependency installation
