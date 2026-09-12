@@ -16,11 +16,11 @@ const typePriority: Partial<Record<EvidenceEvent['type'], number>> = {
 
 function scoreEvidence(event: EvidenceEvent, bundle: IncidentBundle): number {
   let score = typePriority[event.type] ?? 1;
-  const currentVersion = bundle.serviceHealth.version.toLowerCase();
+  const currentVersion = bundle.serviceHealth.version?.toLowerCase();
   const searchable =
     `${event.title} ${event.excerpt} ${Object.values(event.metadata).join(' ')}`.toLowerCase();
 
-  if (searchable.includes(currentVersion)) score += 4;
+  if (currentVersion && searchable.includes(currentVersion)) score += 4;
   if (/database|db_url|database_url|connection|environment|config/.test(searchable)) score += 3;
   if (/checkout|critical|500|failed|exception/.test(searchable)) score += 2;
 

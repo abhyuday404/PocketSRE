@@ -13,6 +13,7 @@ export const EvidenceSourceSchema = z.enum([
   'health',
   'database',
   'investigator',
+  'gateway',
 ]);
 export type EvidenceSource = z.infer<typeof EvidenceSourceSchema>;
 
@@ -25,6 +26,8 @@ export const EventTypeSchema = z.enum([
   'error_rate_increased',
   'health_check_failed',
   'health_check_passed',
+  'health_check_unavailable',
+  'collection_failed',
   'database_check_failed',
   'investigation_result',
   'recovery_completed',
@@ -57,8 +60,9 @@ export type EvidenceEvent = z.infer<typeof EvidenceEventSchema>;
 export const ServiceHealthSchema = z.object({
   serviceId: z.string().min(1),
   serviceName: z.string().min(1),
-  status: z.enum(['healthy', 'degraded', 'down']),
-  version: z.string().min(1),
+  status: z.enum(['healthy', 'degraded', 'down', 'unknown']),
+  // Null means this observation did not establish a current release.
+  version: z.string().min(1).nullable(),
   checkedAt: z.string().datetime(),
   checks: z.record(z.string(), z.enum(['healthy', 'degraded', 'failed'])),
 });
@@ -76,6 +80,8 @@ export const IncidentBundleSchema = z.object({
         source: z.string(),
         status: z.enum(['ok', 'unavailable']),
         message: z.string(),
+        checkedAt: z.string().datetime().optional(),
+        evidenceIds: z.array(z.string()).optional(),
       }),
     )
     .optional(),
@@ -123,16 +129,21 @@ export const DiagnosisSchema = z.object({
 export type Diagnosis = z.infer<typeof DiagnosisSchema>;
 export const diagnosisJsonSchema = z.toJSONSchema(DiagnosisSchema);
 
-export const ApprovedActionRequestSchema = z.object({
-  requestId: z.string().uuid(),
-  expectedVersion: z.string().min(1),
-  incidentId: z.string().min(1),
-  serviceId: z.string().min(1),
-  action: AllowedActionSchema,
-  target: z.string().min(1),
-  parameters: z.record(z.string(), z.string()).default({}),
-  approvedAt: z.string().datetime(),
-});
+export const ApprovedActionRequestSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    expectedVersion: z.string().min(1).nullable(),
+    incidentId: z.string().min(1),
+    serviceId: z.string().min(1),
+    action: AllowedActionSchema,
+    target: z.string().min(1),
+    parameters: z.record(z.string(), z.string()).default({}),
+    approvedAt: z.string().datetime(),
+  })
+  .refine((request) => request.action === 'RUN_HEALTH_CHECK' || request.expectedVersion !== null, {
+    message: 'A mutating action requires a known current release.',
+    path: ['expectedVersion'],
+  });
 export type ApprovedActionRequest = z.infer<typeof ApprovedActionRequestSchema>;
 
 export const ActionResultSchema = z.object({

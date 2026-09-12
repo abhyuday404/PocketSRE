@@ -1,7 +1,14 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { ServiceHealthSchema, type EvidenceEvent, type IncidentBundle } from '@pocketsre/contracts';
+import {
+  ServiceHealthSchema,
+  EvidenceEventSchema,
+  type ServiceHealth,
+  type EvidenceEvent,
+  type IncidentBundle,
+} from '@pocketsre/contracts';
 import { redactEvidence, sanitizeBundle } from '@pocketsre/incident-engine';
+import { IncidentStore, DEFAULT_RETENTION } from './incidents.js';
 
 type Fetch = typeof globalThis.fetch;
 export interface EvidenceConnector {
@@ -9,18 +16,20 @@ export interface EvidenceConnector {
   collect(since: string): Promise<EvidenceEvent[]>;
 }
 
-async function getJson(url: string, token: string | undefined, fetcher: Fetch): Promise<unknown> {
-  const response = await fetcher(url, {
+function request(url: string, token: string | undefined, fetcher: Fetch, timeoutMs = 8_000) {
+  return fetcher(url, {
     method: 'GET',
     redirect: 'error',
-    signal: AbortSignal.timeout(8_000),
+    signal: AbortSignal.timeout(timeoutMs),
     headers: {
       accept: 'application/json',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       'user-agent': 'PocketSRE/0.1',
     },
   });
-  if (!response.ok) throw new Error(`Provider HTTP ${response.status}`);
+}
+
+async function readJson(response: Response): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('Empty provider response');
   const chunks: Uint8Array[] = [];
@@ -34,9 +43,18 @@ async function getJson(url: string, token: string | undefined, fetcher: Fetch): 
       chunks.push(value);
     }
   } finally {
-    await reader.cancel();
+    await reader.cancel().catch(() => undefined);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+async function getJson(url: string, token: string | undefined, fetcher: Fetch): Promise<unknown> {
+  const response = await request(url, token, fetcher);
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`Provider HTTP ${response.status}`);
+  }
+  return readJson(response);
 }
 
 const CommitSchema = z.object({
@@ -142,7 +160,7 @@ export class SentryConnector implements EvidenceConnector {
     const issues = z.array(IssueSchema).parse(await getJson(url, this.token, this.fetcher));
     return issues.slice(0, 10).map((issue) =>
       redactEvidence({
-        id: `sentry:${issue.id}`,
+        id: `sentry:${issue.id}:${new Date(issue.lastSeen).toISOString()}`,
         source: 'sentry',
         type: 'exception',
         timestamp: new Date(issue.lastSeen).toISOString(),
@@ -155,79 +173,269 @@ export class SentryConnector implements EvidenceConnector {
   }
 }
 
-export function createLiveBundleLoader(options: {
+export interface LiveBundleOptions {
   healthUrl: string;
+  serviceId: string;
+  serviceName: string;
   healthToken?: string;
+  incidentPath?: string;
   connectors: EvidenceConnector[];
   fetcher?: Fetch;
-}) {
-  const url = new URL(options.healthUrl);
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search)
-    throw new Error('HEALTH_URL must be an HTTP(S) URL without credentials or query parameters');
-  let current: IncidentBundle['incident'] | undefined;
-  return async (): Promise<IncidentBundle> => {
-    const health = ServiceHealthSchema.parse(
-      await getJson(url.toString(), options.healthToken, options.fetcher ?? fetch),
+  now?: () => number;
+  healthTimeoutMs?: number;
+  healthMaxAgeMs?: number;
+}
+
+type CollectionEntry = NonNullable<IncidentBundle['collection']>[number];
+type HealthObservation = {
+  health: ServiceHealth;
+  evidence: EvidenceEvent;
+  collection: CollectionEntry;
+};
+const ObservedHealthSchema = ServiceHealthSchema.extend({
+  status: z.enum(['healthy', 'degraded', 'down']),
+});
+
+async function collectHealth(options: LiveBundleOptions): Promise<HealthObservation> {
+  const now = options.now ?? Date.now;
+  let httpStatus: number | undefined;
+  let reason = 'network_error';
+  let observed: ServiceHealth | undefined;
+  try {
+    const response = await request(
+      options.healthUrl,
+      options.healthToken,
+      options.fetcher ?? fetch,
+      options.healthTimeoutMs,
     );
-    const generatedAt = new Date().toISOString();
-    const unhealthy = health.status !== 'healthy';
-    if (!current || (current.status === 'resolved' && unhealthy)) {
-      current = {
-        id: randomUUID(),
-        serviceId: health.serviceId,
-        title: `${health.serviceName} health incident`,
-        severity: unhealthy ? 'critical' : 'info',
-        status: unhealthy ? 'open' : 'resolved',
-        startedAt: generatedAt,
-        lastUpdatedAt: generatedAt,
-      };
+    httpStatus = response.status;
+    if (response.ok || response.status >= 500) {
+      reason = 'invalid_response';
+      const parsed = ObservedHealthSchema.safeParse(await readJson(response));
+      if (parsed.success) {
+        const age = now() - Date.parse(parsed.data.checkedAt);
+        if (parsed.data.serviceId !== options.serviceId) reason = 'service_mismatch';
+        else if (age > (options.healthMaxAgeMs ?? 60_000)) reason = 'stale_response';
+        else if (age < -5_000) reason = 'future_response';
+        else if (!response.ok && parsed.data.status === 'healthy') reason = 'conflicting_response';
+        else {
+          observed = { ...parsed.data, serviceName: options.serviceName };
+          reason = 'observed';
+        }
+      }
+    } else {
+      reason = 'http_error';
+      await response.body?.cancel().catch(() => undefined);
     }
-    current = {
-      ...current,
+  } catch (error) {
+    if (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name))
+      reason = 'timeout';
+    // Never expose exception strings, response bodies, URLs or credentials.
+  }
+  return healthObservation(options, reason, httpStatus, observed);
+}
+
+function healthObservation(
+  options: LiveBundleOptions,
+  reason: string,
+  httpStatus?: number,
+  observed?: ServiceHealth,
+): HealthObservation {
+  const checkedAt = new Date((options.now ?? Date.now)()).toISOString();
+  const endpointFailed = httpStatus !== undefined && httpStatus >= 500;
+  const health: ServiceHealth = observed ?? {
+    serviceId: options.serviceId,
+    serviceName: options.serviceName,
+    status: endpointFailed ? 'down' : 'unknown',
+    version: null,
+    checkedAt,
+    checks: {},
+  };
+  const message = observed
+    ? `Health endpoint reports ${observed.status}.`
+    : endpointFailed
+      ? `Health endpoint returned HTTP ${httpStatus}. Current component health and release could not be established (${reason}).`
+      : `Current service health and release are unknown (${reason}${httpStatus ? `, HTTP ${httpStatus}` : ''}). This does not establish which component failed.`;
+  const evidence: EvidenceEvent = {
+    id: `health:${randomUUID()}`,
+    source: 'health',
+    type:
+      health.status === 'unknown'
+        ? 'health_check_unavailable'
+        : health.status === 'healthy'
+          ? 'health_check_passed'
+          : 'health_check_failed',
+    timestamp: checkedAt,
+    title: `${options.serviceName}: ${observed ? health.status : endpointFailed ? 'health endpoint failure' : 'health unknown'}`,
+    excerpt: observed ? `${message}\n${JSON.stringify(observed.checks)}` : message,
+    metadata: {
+      reason,
+      ...(httpStatus !== undefined ? { httpStatus: String(httpStatus) } : {}),
+      ...(observed ? { healthCheckedAt: observed.checkedAt } : {}),
+      ...(observed?.version ? { release: observed.version } : {}),
+    },
+  };
+  return {
+    health,
+    evidence,
+    collection: {
+      source: 'Health',
+      status: observed ? 'ok' : 'unavailable',
+      checkedAt,
+      message,
+      evidenceIds: [evidence.id],
+    },
+  };
+}
+
+export function createLiveBundleLoader(options: LiveBundleOptions) {
+  const url = new URL(options.healthUrl);
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    throw new Error('HEALTH_URL must be an HTTP(S) URL without credentials or query parameters');
+  if (!options.serviceId.trim() || !options.serviceName.trim())
+    throw new Error('HEALTH_SERVICE_ID and HEALTH_SERVICE_NAME are required for live collection');
+  for (const limit of [options.healthTimeoutMs, options.healthMaxAgeMs]) {
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1))
+      throw new Error('Health time limits must be positive integers');
+  }
+  const store = new IncidentStore(options.serviceId, options.incidentPath);
+  const now = options.now ?? Date.now;
+  let pending: Promise<unknown> = Promise.resolve();
+  let storageWarningRecorded = false;
+
+  async function collect(): Promise<IncidentBundle> {
+    await store.load();
+    const previous = store.current;
+    const started = now();
+    const since = new Date(
+      Math.max(
+        previous && previous.incident.status !== 'resolved'
+          ? Date.parse(previous.incident.startedAt) - 3_600_000
+          : started - 3_600_000,
+        started - DEFAULT_RETENTION.evidenceAgeMs,
+      ),
+    ).toISOString();
+    // Health and all providers start independently, including on an unavailable cold start.
+    const [healthResult, results] = await Promise.all([
+      collectHealth(options),
+      Promise.allSettled(
+        options.connectors.map(async (connector) =>
+          z.array(EvidenceEventSchema).parse(await connector.collect(since)),
+        ),
+      ),
+    ]);
+    const generatedAt = new Date(now()).toISOString();
+    // A slow provider must not turn a once-fresh observation into a stale recovery claim.
+    const observation =
+      healthResult.collection.status === 'ok' &&
+      Date.parse(generatedAt) - Date.parse(healthResult.health.checkedAt) >
+        (options.healthMaxAgeMs ?? 60_000)
+        ? healthObservation(
+            options,
+            'stale_response',
+            Number(healthResult.evidence.metadata.httpStatus),
+          )
+        : healthResult;
+    const health = observation.health;
+    const unhealthy = health.status !== 'healthy';
+    const previousIncident = previous?.incident;
+    const newIncident = !previousIncident || (previousIncident.status === 'resolved' && unhealthy);
+    const incident: IncidentBundle['incident'] = {
+      id: newIncident ? randomUUID() : previousIncident.id,
+      serviceId: options.serviceId,
+      title: `${options.serviceName} health incident`,
       status: unhealthy ? 'open' : 'resolved',
-      severity: unhealthy ? 'critical' : 'info',
+      // Losing observability never resolves or downgrades an existing confirmed outage.
+      severity:
+        health.status === 'healthy'
+          ? 'info'
+          : health.status === 'unknown'
+            ? !newIncident && previousIncident.severity === 'critical'
+              ? 'critical'
+              : 'warning'
+            : 'critical',
+      startedAt: newIncident ? new Date(started).toISOString() : previousIncident.startedAt,
       lastUpdatedAt: generatedAt,
     };
-    const incident = { ...current };
-    const since = new Date(Date.parse(incident.startedAt) - 3_600_000).toISOString();
-    const results = await Promise.allSettled(
-      options.connectors.map((connector) => connector.collect(since)),
-    );
-    const evidence: EvidenceEvent[] = [
-      {
-        id: `health:${current.id}:${health.version}:${health.status}`,
-        source: 'health',
-        type: unhealthy ? 'health_check_failed' : 'health_check_passed',
-        timestamp: health.checkedAt,
-        title: `${health.serviceName}: ${health.status}`,
-        excerpt: JSON.stringify(health.checks),
-        metadata: { release: health.version },
-      },
-    ];
-    const collection = results.map((result, index) => {
+    const evidence: EvidenceEvent[] = [observation.evidence];
+    const collection: CollectionEntry[] = [observation.collection];
+    results.forEach((result, index) => {
       const source = options.connectors[index]!.name;
       if (result.status === 'fulfilled') {
         evidence.push(...result.value);
-        return {
+        collection.push({
           source,
-          status: 'ok' as const,
+          status: 'ok',
+          checkedAt: generatedAt,
           message: `${result.value.length} evidence items collected.`,
-        };
+        });
+      } else {
+        const id = `collection:${randomUUID()}`;
+        const message =
+          'Could not collect evidence. Check credentials, permissions, rate limits, and connectivity.';
+        evidence.push({
+          id,
+          source: 'gateway',
+          type: 'collection_failed',
+          timestamp: generatedAt,
+          title: `${source} evidence unavailable`,
+          excerpt: message,
+          metadata: { connector: source },
+        });
+        collection.push({
+          source,
+          status: 'unavailable',
+          checkedAt: generatedAt,
+          message,
+          evidenceIds: [id],
+        });
       }
-      return {
-        source,
-        status: 'unavailable' as const,
-        message:
-          'Could not collect evidence. Check credentials, permissions, rate limits, and connectivity.',
-      };
     });
-    return sanitizeBundle({
-      schemaVersion: 1,
-      generatedAt,
-      incident,
-      serviceHealth: health,
-      evidence,
-      collection,
-    });
-  };
+    if (store.recoveredCorruptStorage) {
+      const id = `storage:${randomUUID()}`;
+      const message =
+        'Corrupt incident storage was quarantined. Earlier incident identity and evidence could not be restored.';
+      if (!storageWarningRecorded)
+        evidence.push({
+          id,
+          source: 'gateway',
+          type: 'collection_failed',
+          timestamp: generatedAt,
+          title: 'Incident continuity unavailable',
+          excerpt: message,
+          metadata: { reason: 'storage_corrupt' },
+        });
+      collection.push({
+        source: 'Incident storage',
+        status: 'unavailable',
+        checkedAt: generatedAt,
+        message,
+        ...(!storageWarningRecorded ? { evidenceIds: [id] } : {}),
+      });
+    }
+    const bundle = await store.save(
+      sanitizeBundle({
+        schemaVersion: 1,
+        generatedAt,
+        incident,
+        serviceHealth: health,
+        evidence,
+        collection,
+      }),
+    );
+    storageWarningRecorded = true;
+    return bundle;
+  }
+  function loadBundle(): Promise<IncidentBundle> {
+    const next = pending.then(collect);
+    pending = next.catch(() => undefined);
+    return next;
+  }
+  return Object.assign(loadBundle, { initialize: () => store.load() });
 }

@@ -33,6 +33,7 @@ const sourceLabels: Record<EvidenceEvent['source'], string> = {
   health: 'Health',
   database: 'Database',
   investigator: 'Investigation',
+  gateway: 'Gateway',
 };
 const timeLabel = (timestamp: string) =>
   new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

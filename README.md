@@ -9,9 +9,9 @@ PocketSRE is a phone-first prototype that collects operational evidence, analyze
 - Android app with health, chronological evidence, cited diagnosis, approval dialogs, and action history.
 - On-device GGUF inference adapter with validation and an automatic, clearly labelled deterministic fallback.
 - Sanitized offline history, Secure Store connection credentials, JSON file sharing and investigation import.
-- Authenticated gateway, stable incidents, approval freshness/version checks, idempotent actions, and a persistent action ledger.
+- Authenticated gateway, durable live incidents and accumulated evidence, approval freshness/version checks, idempotent actions, and a persistent action ledger.
 - Controlled checkout regression: successful requests → HTTP 500s → approved rollback → verified healthy requests.
-- Read-only GitHub commits/patches and Sentry issues alongside a normalized service-health endpoint.
+- Read-only GitHub commits/patches and Sentry issues collected independently of health failures, with explicit unknown health and collection availability.
 - Laptop CLI for bundle checks and bounded repository environment-contract inspection.
 
 ## Workspace
@@ -84,9 +84,11 @@ pnpm format:check
 
 GitHub Actions is configured to run these checks on pushes and pull requests. [The demo runbook](docs/hackathon-runbook.md) covers the presentation flow.
 
+On Windows, only the investigator's file-symlink regression is skipped if creating its fixture fails with a privilege error. Its ordinary environment-contract checks always run; Linux CI requires the symlink regression too.
+
 ## Optional Docker backend
 
-Set a strong `GATEWAY_ACCESS_TOKEN` in your shell or an untracked root `.env`, then run `docker compose up --build`. Only the gateway is published, on loopback by default. `GATEWAY_BIND_ADDRESS` can explicitly enable LAN access. The action ledger uses a persistent named volume. This is a development image; Docker execution has not been verified on the development machine.
+Set a strong `GATEWAY_ACCESS_TOKEN` in your shell or an untracked root `.env`, then run `docker compose up --build`. Only the gateway is published, on loopback by default. `GATEWAY_BIND_ADDRESS` can explicitly enable LAN access. The action ledger and live incident store use a persistent named volume. This is a development image; Docker execution has not been verified on the development machine.
 
 ## Current limits
 

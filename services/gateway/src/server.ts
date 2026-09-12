@@ -17,6 +17,8 @@ if (!['demo', 'live'].includes(mode)) throw new Error('POCKETSRE_MODE must be de
 const connectors: EvidenceConnector[] = [];
 if (mode === 'live') {
   if (!process.env.HEALTH_URL) throw new Error('HEALTH_URL is required in live mode');
+  if (!process.env.HEALTH_SERVICE_ID || !process.env.HEALTH_SERVICE_NAME)
+    throw new Error('HEALTH_SERVICE_ID and HEALTH_SERVICE_NAME are required in live mode');
   if (process.env.GITHUB_REPOSITORY)
     connectors.push(new GitHubConnector(process.env.GITHUB_REPOSITORY, process.env.GITHUB_TOKEN));
   if (
@@ -39,21 +41,27 @@ if (mode === 'live') {
     );
   }
 }
+const loadBundle =
+  mode === 'live'
+    ? createLiveBundleLoader({
+        healthUrl: process.env.HEALTH_URL!,
+        serviceId: process.env.HEALTH_SERVICE_ID!,
+        serviceName: process.env.HEALTH_SERVICE_NAME!,
+        healthToken: process.env.HEALTH_TOKEN,
+        healthMaxAgeMs: Number(process.env.HEALTH_MAX_AGE_MS ?? 60_000),
+        incidentPath: resolve(process.env.INCIDENT_PATH ?? '.pocketsre-data/incidents.json'),
+        connectors,
+      })
+    : undefined;
 const app = createGatewayApp({
-  loadBundle:
-    mode === 'live'
-      ? createLiveBundleLoader({
-          healthUrl: process.env.HEALTH_URL!,
-          healthToken: process.env.HEALTH_TOKEN,
-          connectors,
-        })
-      : undefined,
+  loadBundle,
   demoServiceUrl: process.env.DEMO_SERVICE_URL,
   accessToken: process.env.GATEWAY_ACCESS_TOKEN,
   auditPath: resolve(process.env.AUDIT_PATH ?? '.pocketsre-data/actions.json'),
 });
 
 try {
+  await loadBundle?.initialize();
   await app.listen({ port, host });
   console.info(`PocketSRE gateway (${mode}) listening on http://${host}:${port}`);
 } catch (error) {

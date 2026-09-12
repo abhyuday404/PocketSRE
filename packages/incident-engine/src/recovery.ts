@@ -2,7 +2,12 @@ import type { IncidentBundle } from '@pocketsre/contracts';
 
 /** A rollback target must come from the current deployment, never from model parameters. */
 export function getRollbackTarget(bundle: IncidentBundle): string | null {
-  if (bundle.serviceHealth.status === 'healthy' || bundle.incident.status === 'resolved')
+  if (
+    !['degraded', 'down'].includes(bundle.serviceHealth.status) ||
+    !bundle.serviceHealth.version ||
+    bundle.incident.status === 'resolved' ||
+    bundle.collection?.some((item) => item.source === 'Health' && item.status !== 'ok')
+  )
     return null;
   const deployment = [...bundle.evidence]
     .filter(
