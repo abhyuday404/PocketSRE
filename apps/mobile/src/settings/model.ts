@@ -1,4 +1,23 @@
 import * as SecureStore from 'expo-secure-store';
+let libraryRevision = 0;
+const libraryListeners = new Set<() => void>();
+let pendingLibraryWrite: Promise<void> = Promise.resolve();
+function writeLibrary(update: () => Promise<void>): Promise<void> {
+  const result = pendingLibraryWrite.then(update);
+  pendingLibraryWrite = result.catch(() => {});
+  return result;
+}
+export const getModelLibraryRevision = () => libraryRevision;
+export const subscribeModelLibrary = (listener: () => void) => {
+  libraryListeners.add(listener);
+  return () => {
+    libraryListeners.delete(listener);
+  };
+};
+function libraryChanged() {
+  libraryRevision++;
+  libraryListeners.forEach((listener) => listener());
+}
 export async function loadModelPath(): Promise<string | undefined> {
   return (await SecureStore.getItemAsync('pocketsre.model-path')) ?? undefined;
 }
@@ -29,9 +48,20 @@ export async function loadModels(): Promise<SavedModel[]> {
   return models;
 }
 export async function rememberModel(path: string, name: string) {
-  const models = (await loadModels()).filter((model) => model.path !== path);
-  await SecureStore.setItemAsync(
-    'pocketsre.model-library',
-    JSON.stringify([...models, { path, name: name.slice(0, 100) }].slice(-8)),
-  );
+  await writeLibrary(async () => {
+    const models = (await loadModels()).filter((model) => model.path !== path);
+    await SecureStore.setItemAsync(
+      'pocketsre.model-library',
+      JSON.stringify([...models, { path, name: name.slice(0, 100) }].slice(-8)),
+    );
+    libraryChanged();
+  });
+}
+
+export async function forgetModel(path: string): Promise<void> {
+  await writeLibrary(async () => {
+    const models = (await loadModels()).filter((model) => model.path !== path);
+    await SecureStore.setItemAsync('pocketsre.model-library', JSON.stringify(models));
+    libraryChanged();
+  });
 }

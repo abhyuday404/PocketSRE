@@ -232,7 +232,7 @@ export class ResilientTriageEngine implements LocalTriageEngine {
   }
   chat: ChatCompletion = async (messages, onToken, signal) => {
     if (!this.primary.chat)
-      throw new Error('Import a GGUF model in Settings to use temporary chat.');
+      throw new Error('Download or import a model in Settings to use temporary chat.');
     return this.primary.chat(messages, onToken, signal);
   };
   async proposeFix(context: FixContext): Promise<FixProposal> {

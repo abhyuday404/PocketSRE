@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@noble/hashes": "2.0.1",
     "@pocketsre/contracts": "workspace:*",
     "@pocketsre/incident-engine": "workspace:*",
     "expo": "~57.0.20",

@@ -196,7 +196,7 @@ export function FixHarness({
         ) : null}
         {!modelAvailable ? (
           <>
-            <Text style={ui.body}>Import a GGUF model in Settings to use the agent.</Text>
+            <Text style={ui.body}>Download or import a model in Settings to use the agent.</Text>
             {onOpenSettings ? (
               <Button
                 label="Open model settings"
@@ -213,7 +213,7 @@ export function FixHarness({
           <>
             <Text style={ui.body}>
               Enable GitHub fixes on your gateway and choose which source files PocketSRE can read
-              and edit. Import a GGUF model in Settings to generate patches.
+              and edit. Download or import a model in Settings to generate patches.
             </Text>
             <Button
               label="Refresh repository access"

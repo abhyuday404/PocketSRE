@@ -55,7 +55,7 @@ it('requires an imported model and a nonblank message', async () => {
   await mount(false);
   await act(async () => input().props.onChangeText('Hello'));
   expect(button('Send message').props.disabled).toBe(true);
-  expect(button('Import a model in Settings')).toBeDefined();
+  expect(button('Get a model in Settings')).toBeDefined();
   expect(chat).not.toHaveBeenCalled();
 });
 

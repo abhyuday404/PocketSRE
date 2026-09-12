@@ -6,7 +6,14 @@ vi.mock('expo-secure-store', () => ({
     values.set(key, value);
   },
 }));
-import { loadModels, rememberModel, saveModelPath } from './model';
+import {
+  forgetModel,
+  getModelLibraryRevision,
+  subscribeModelLibrary,
+  loadModels,
+  rememberModel,
+  saveModelPath,
+} from './model';
 beforeEach(() => values.clear());
 it('preserves the previously imported model when upgrading or recovering a corrupt library', async () => {
   await saveModelPath('file:///models/existing.gguf');
@@ -24,4 +31,24 @@ it('deduplicates reimports and bounds the saved library without storing model da
   const library = await loadModels();
   expect(library).toHaveLength(8);
   expect(library.at(-1)).toEqual({ path: 'file:///models/9.gguf', name: 'Renamed' });
+});
+
+it('notifies every mounted picker when models are added or removed', async () => {
+  const listener = vi.fn();
+  const unsubscribe = subscribeModelLibrary(listener);
+  const before = getModelLibraryRevision();
+  await rememberModel('file:///models/download.gguf', 'Downloaded');
+  await forgetModel('file:///models/download.gguf');
+  expect(getModelLibraryRevision()).toBe(before + 2);
+  expect(listener).toHaveBeenCalledTimes(2);
+  expect(await loadModels()).toEqual([]);
+  unsubscribe();
+});
+
+it('does not lose a download when an import finishes at the same time', async () => {
+  await Promise.all([
+    rememberModel('file:///models/download.gguf', 'Downloaded'),
+    rememberModel('file:///models/import.gguf', 'Imported'),
+  ]);
+  expect((await loadModels()).map((model) => model.name)).toEqual(['Downloaded', 'Imported']);
 });

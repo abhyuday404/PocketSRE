@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Text } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
-import { rememberModel, saveModelPath } from '../settings/model';
-import { ModelPicker } from './ModelPicker';
-import { Badge, Button, Card, ui } from './ui';
+import { rememberModel, saveModelPath, type SavedModel } from '../settings/model';
+import { deviceModelStorage, modelDownloads } from '../models/deviceDownloads';
+import type { DownloadableModel } from '../models/catalog';
+import { ModelCatalog } from './ModelCatalog';
+import { Card, ui } from './ui';
 
 export function LocalModel({
   path,
@@ -17,8 +19,39 @@ export function LocalModel({
 }) {
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState('');
-  async function choose() {
+  const operation = useRef(false);
+  const downloads = useSyncExternalStore(modelDownloads.subscribe, modelDownloads.getSnapshot);
+  const locked = busy || working || !!downloads.active || !!downloads.removing;
+  useEffect(() => {
+    void modelDownloads.initialize();
+  }, []);
+  async function select(model: DownloadableModel) {
+    if (locked || operation.current) return;
+    operation.current = true;
     setWorking(true);
+    setMessage('');
+    try {
+      if (!deviceModelStorage.installed(model))
+        throw new Error(
+          'The model file is missing or incomplete. Restart the app to download it again.',
+        );
+      const modelPath = deviceModelStorage.path(model);
+      await rememberModel(modelPath, model.name);
+      await saveModelPath(modelPath);
+      onChange(modelPath);
+      setMessage(`${model.name} selected. The next request loads it on this phone.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not select the model.');
+    } finally {
+      operation.current = false;
+      setWorking(false);
+    }
+  }
+  async function choose() {
+    if (locked || operation.current) return;
+    operation.current = true;
+    setWorking(true);
+    setMessage('');
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: '*/*',
@@ -37,7 +70,7 @@ export function LocalModel({
         handle.close();
       }
       const model = new File(Paths.document, `pocketsre-model-${Date.now()}.gguf`);
-      source.move(model);
+      await source.move(model);
       await rememberModel(model.uri, asset.name);
       await saveModelPath(model.uri);
       onChange(model.uri);
@@ -45,44 +78,46 @@ export function LocalModel({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not import the model.');
     } finally {
+      operation.current = false;
+      setWorking(false);
+    }
+  }
+  async function selectSaved(model: SavedModel) {
+    if (locked || operation.current) return;
+    operation.current = true;
+    setWorking(true);
+    setMessage('');
+    try {
+      if (model.path && !new File(model.path).exists)
+        throw new Error('The saved model file is missing. Import or download it again.');
+      await saveModelPath(model.path);
+      onChange(model.path);
+      setMessage(
+        model.path
+          ? model.name + ' selected.'
+          : 'Local rules enabled. Your models remain on this phone.',
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not save the model setting.');
+    } finally {
+      operation.current = false;
       setWorking(false);
     }
   }
   return (
     <Card>
       <Text style={ui.title}>On-device model</Text>
-      <Badge>{path ? 'Model selected' : 'Local rules'}</Badge>
-      <ModelPicker path={path} busy={busy || working} onChange={onChange} />
-      <Text style={ui.body}>
-        A GGUF file contains the AI model’s weights. Import a compatible model to analyze evidence
-        and draft small code fixes offline. GitHub operations still need a connection.
-      </Text>
-      <Text style={ui.label}>
-        The file is copied into app storage. Model size and available phone memory determine whether
-        it can run. Models are never uploaded to GitHub.
-      </Text>
-      <Button
-        label={working ? 'Importing model…' : 'Import GGUF model'}
+      <ModelCatalog
+        state={downloads}
+        path={path}
         disabled={busy || working}
-        onPress={() => void choose()}
+        onSelect={(model) => void select(model)}
+        onSaved={(model) => void selectSaved(model)}
+        onImport={() => void choose()}
+        onRules={() => void selectSaved({ path: '', name: 'Local rules' })}
+        onError={setMessage}
       />
-      {path ? (
-        <Button
-          label="Use local rules"
-          variant="outline"
-          disabled={busy || working}
-          onPress={() => {
-            void saveModelPath('')
-              .then(() => {
-                onChange('');
-                setMessage(
-                  'Rule-based diagnosis enabled. Imported model files remain in app storage.',
-                );
-              })
-              .catch(() => setMessage('Could not save the model setting.'));
-          }}
-        />
-      ) : null}
+      {working ? <Text style={ui.label}>Updating model…</Text> : null}
       {message ? (
         <Text accessibilityLiveRegion="polite" style={ui.body}>
           {message}

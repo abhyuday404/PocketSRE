@@ -397,7 +397,7 @@ export function useIncident(modelPath?: string) {
   const chat: ChatCompletion = async (messages, onToken, signal) => {
     if (lock.current || !ready.current)
       throw new Error('Wait for the current operation to finish.');
-    if (!engine.chat) throw new Error('Import a GGUF model in Settings to use temporary chat.');
+    if (!engine.chat) throw new Error('Download or import a model in Settings to use temporary chat.');
     lock.current = true;
     setBusy(true);
     try {
