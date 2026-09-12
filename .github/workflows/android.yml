@@ -1,0 +1,90 @@
+name: Compile native Android APKs
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - '.github/workflows/android.yml'
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  apk:
+    name: Compile ${{ matrix.profile }} APK (no device test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        profile: [debug, internal]
+    env:
+      CI: '1'
+      PNPM_WORKERS: '1000'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_NO_DOTENV: '1'
+      EXPO_PUBLIC_MODEL_PATH: ''
+      EXPO_PUBLIC_ACCELERATOR: cpu
+      # The native build command explicitly verifies/restores the pinned archives.
+      RNLLAMA_SKIP_POSTINSTALL: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: '14742923'
+      - name: Install the Android toolchain
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
+      - run: pnpm install --frozen-lockfile --prefer-offline --network-concurrency=2 --child-concurrency=1
+      - run: pnpm test:android-build
+      - name: Compile installable native APK
+        run: pnpm android:${{ matrix.profile }}
+      - name: Inspect APK signature and packaged native libraries
+        env:
+          APK_PATH: artifacts/android/pocketsre-${{ matrix.profile }}.apk
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK_PATH"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH"
+          unzip -Z1 "$APK_PATH" > apk-entries.txt
+          for abi in arm64-v8a x86_64; do
+            grep -Fx "lib/$abi/librnllama.so" apk-entries.txt
+            grep -Fx "lib/$abi/librnllama_jni.so" apk-entries.txt
+          done
+          if [ '${{ matrix.profile }}' = 'internal' ]; then
+            grep -Fx 'assets/index.android.bundle' apk-entries.txt
+          fi
+      - name: Retain disposable test APK and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocketsre-${{ matrix.profile }}-${{ github.sha }}
+          path: |
+            artifacts/android/pocketsre-${{ matrix.profile }}.apk
+            artifacts/android/pocketsre-${{ matrix.profile }}.apk.sha256
+          if-no-files-found: error
+          retention-days: 7

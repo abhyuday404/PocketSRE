@@ -4,7 +4,7 @@
 
 1. Start the services with `pnpm dev:backend`.
 2. Confirm `GET /health` on ports 4100 and 4200. `POST http://127.0.0.1:4200/checkout` should return 200.
-3. Open an installed native Android development build. Use USB/ADB forwarding or configure the LAN token as described in the README.
+3. Install an [internal Android APK](android.md#development-and-internal-testing) for a demo that starts without Metro or a model download. A development APK needs Metro. Complete the [device smoke checklist](android.md#device-smoke-checklist), then use USB/ADB forwarding or configure the LAN token as described in the README.
 4. Verify **Connections**, refresh successfully, and confirm the **DEMO** badge. SAMPLE, CACHED, and IMPORTED are not live connections.
 5. Reset the demo if needed, then analyze once. Confirm whether the UI reports deterministic rules or actual on-device inference; do not describe rules as an LLM.
 6. If demonstrating GGUF inference, load and benchmark the exact model on the presentation device beforehand. CPU/GPU/NPU paths have not been device-validated in this repository.

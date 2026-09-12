@@ -9,6 +9,7 @@
     "newArchEnabled": true,
     "android": {
       "package": "dev.pocketsre.mobile",
+      "versionCode": 1,
       "permissions": ["INTERNET", "POST_NOTIFICATIONS"],
       "adaptiveIcon": {
         "backgroundColor": "#07110e"
