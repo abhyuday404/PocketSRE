@@ -42,7 +42,8 @@ export function Connections({
           keyboardType="url"
           placeholder="http://127.0.0.1:4100"
           placeholderTextColor={colors.textMuted}
-          selectionColor={colors.text}
+          selectionColor={colors.primary}
+          keyboardAppearance="dark"
           style={[styles.input, focused === 'url' && styles.focused]}
         />
         <Text style={ui.label}>Use localhost with USB forwarding, or a secure server URL.</Text>
@@ -63,7 +64,8 @@ export function Connections({
           secureTextEntry
           placeholder={settings.token ? 'Leave blank to keep saved token' : 'Enter access token'}
           placeholderTextColor={colors.textMuted}
-          selectionColor={colors.text}
+          selectionColor={colors.primary}
+          keyboardAppearance="dark"
           style={[styles.input, focused === 'token' && styles.focused]}
         />
         <Text style={ui.label}>A saved token is kept only when the URL is unchanged.</Text>
@@ -94,13 +96,13 @@ const styles = StyleSheet.create({
   input: {
     color: colors.text,
     fontSize: 13,
-    minHeight: 44,
+    minHeight: 50,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.muted,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 7,
+    borderRadius: 10,
   },
-  focused: { borderColor: colors.text },
+  focused: { borderColor: colors.primary },
 });
