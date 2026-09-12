@@ -46,6 +46,7 @@ export function Connections({
           placeholder="http://127.0.0.1:4100"
           placeholderTextColor={colors.textMuted}
           selectionColor={colors.primary}
+          keyboardAppearance="dark"
           style={[styles.input, focused === 'url' && styles.focused]}
         />
         <Text style={ui.label}>Use localhost with USB forwarding, or a secure server URL.</Text>
@@ -66,7 +67,8 @@ export function Connections({
           secureTextEntry
           placeholder={settings.token ? 'Leave blank to keep saved token' : 'Enter access token'}
           placeholderTextColor={colors.textMuted}
-          selectionColor={colors.text}
+          selectionColor={colors.primary}
+          keyboardAppearance="dark"
           style={[styles.input, focused === 'token' && styles.focused]}
         />
         <Text style={ui.label}>A saved token is kept only when the URL is unchanged.</Text>
