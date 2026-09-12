@@ -1,6 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Text, View } from 'react-native';
-import { loadModels, saveModelPath, type SavedModel } from '../settings/model';
+import {
+  getModelLibraryRevision,
+  subscribeModelLibrary,
+  loadModels,
+  saveModelPath,
+  type SavedModel,
+} from '../settings/model';
 import { Button, ui } from './ui';
 export function ModelPicker({
   path,
@@ -14,19 +20,23 @@ export function ModelPicker({
   const [models, setModels] = useState<SavedModel[]>([]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState('');
+  const revision = useSyncExternalStore(subscribeModelLibrary, getModelLibraryRevision);
   useEffect(() => {
     let active = true;
     void loadModels()
       .then((models) => {
-        if (active) setModels(models);
+        if (active) {
+          setModels(models);
+          setError('');
+        }
       })
       .catch(() => {
-        if (active) setError('Could not load imported models.');
+        if (active) setError('Could not load saved models.');
       });
     return () => {
       active = false;
     };
-  }, [path]);
+  }, [path, revision]);
   const selected = models.find((model) => model.path === path);
   return (
     <View style={{ gap: 8 }}>
@@ -55,7 +65,7 @@ export function ModelPicker({
           ))
         : null}
       {open && !models.length ? (
-        <Text style={ui.label}>Import GGUF models in Settings to switch between them.</Text>
+        <Text style={ui.label}>Download or import models in Settings to switch between them.</Text>
       ) : null}
       {error ? <Text style={ui.label}>{error}</Text> : null}
     </View>

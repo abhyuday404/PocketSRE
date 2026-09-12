@@ -95,7 +95,7 @@ export function TempChat({
         <Text style={ui.title}>Temporary model chat</Text>
         <Badge>On this phone · session only</Badge>
         <Text style={ui.body}>
-          Talk directly to your imported model. No repository, gateway, evidence citations, or
+          Talk directly to your on-device model. No repository, gateway, evidence citations, or
           structured answers required.
         </Text>
         <Text style={ui.label}>
@@ -104,7 +104,7 @@ export function TempChat({
         </Text>
         {!modelAvailable ? (
           <Button
-            label="Import a model in Settings"
+            label="Get a model in Settings"
             variant="outline"
             disabled={busy}
             onPress={onOpenSettings}
