@@ -1,4 +1,5 @@
-import { useMemo, type PropsWithChildren } from 'react';
+import type { PropsWithChildren } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   ActivityIndicator,
   Pressable,
@@ -8,7 +9,7 @@ import {
   type ViewStyle,
   type StyleProp,
 } from 'react-native';
-import { useTheme, type Palette } from '../theme';
+import { colors } from '../theme';
 
 export type IconName =
   | 'terminal'
@@ -93,14 +94,12 @@ const paths: Record<IconName, Segment[]> = {
 export function Icon({
   name,
   size = 20,
-  color: customColor,
+  color = colors.text,
 }: {
   name: IconName;
   size?: number;
   color?: string;
 }) {
-  const { colors } = useTheme();
-  const color = customColor ?? colors.text;
   const d = (n: number) => (n * size) / 24;
   const box = (x: number, y: number, w: number, h: number, radius: number, key: string) => (
     <View
@@ -187,8 +186,6 @@ export function Button({
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
-  const { colors } = useTheme();
-  const ui = useUi();
   const foreground = variant === 'primary' ? colors.primaryForeground : colors.text;
   return (
     <Pressable
@@ -201,10 +198,7 @@ export function Button({
         ui.button,
         variant === 'primary' ? ui.primary : variant === 'outline' ? ui.outline : ui.ghost,
         style,
-        {
-          opacity: disabled ? 0.45 : loading ? 0.8 : pressed ? 0.75 : 1,
-          transform: [{ scale: pressed ? 0.98 : 1 }],
-        },
+        { opacity: disabled || loading ? 0.45 : pressed ? 0.7 : 1 },
       ]}
     >
       {loading ? (
@@ -222,8 +216,6 @@ export function Badge({
   tone = 'neutral',
   dot = false,
 }: PropsWithChildren<{ tone?: 'neutral' | 'success' | 'warning' | 'danger'; dot?: boolean }>) {
-  const { colors } = useTheme();
-  const ui = useUi();
   const foreground = tone === 'neutral' ? colors.textMuted : colors[tone];
   const background = tone === 'neutral' ? colors.muted : colors[`${tone}Muted`];
   return (
@@ -236,74 +228,125 @@ export function Badge({
   );
 }
 
-export function Card({ children, style }: PropsWithChildren<{ style?: StyleProp<ViewStyle> }>) {
-  const ui = useUi();
-  return <View style={[ui.card, style]}>{children}</View>;
+/** Decorative native light layers keep the aurora available offline on every screen. */
+export function Aurora({ subtle = false }: { subtle?: boolean }) {
+  return (
+    <View
+      pointerEvents="none"
+      accessible={false}
+      style={[StyleSheet.absoluteFill, { overflow: 'hidden', opacity: subtle ? 0.45 : 1 }]}
+    >
+      <LinearGradient
+        colors={['#B957302B', '#F5A15B14', '#0C0A0900']}
+        start={{ x: 1, y: 0 }}
+        end={{ x: 0.1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={['#FFB56B00', '#EE763F12', '#FFB87540', '#FFD4A51C', '#FFB56B00']}
+        locations={[0, 0.3, 0.5, 0.65, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0.9, y: 1 }}
+        style={{
+          position: 'absolute',
+          width: '150%',
+          height: 330,
+          right: '-40%',
+          top: -140,
+          borderRadius: 180,
+          transform: [{ rotate: '-28deg' }],
+        }}
+      />
+      <LinearGradient
+        colors={['#FFAD7200', '#D56B4820', '#FFD09B30', '#FFAD7200']}
+        start={{ x: 0.2, y: 0 }}
+        end={{ x: 0.8, y: 1 }}
+        style={{
+          position: 'absolute',
+          width: '130%',
+          height: 230,
+          left: '-45%',
+          top: -95,
+          borderRadius: 160,
+          transform: [{ rotate: '-32deg' }],
+        }}
+      />
+    </View>
+  );
 }
 
-export function useUi() {
-  const { colors } = useTheme();
-  return useMemo(() => createUi(colors), [colors]);
+export function Card({
+  children,
+  style,
+  aurora = false,
+}: PropsWithChildren<{ style?: StyleProp<ViewStyle>; aurora?: boolean }>) {
+  return (
+    <View style={[ui.card, style]}>
+      {aurora ? <Aurora /> : null}
+      {children}
+    </View>
+  );
 }
-const createUi = (colors: Palette) =>
-  StyleSheet.create({
-    card: {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      borderWidth: 1,
-      borderRadius: 22,
-      padding: 20,
-      gap: 14,
-    },
-    row: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 },
-    between: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      flexWrap: 'wrap',
-      gap: 10,
-    },
-    title: {
-      fontSize: 16,
-      lineHeight: 23,
-      fontWeight: '600',
-      color: colors.text,
-      letterSpacing: -0.2,
-    },
-    body: { fontSize: 14, lineHeight: 22, color: colors.textMuted },
-    label: { fontSize: 12, lineHeight: 18, color: colors.textMuted },
-    mono: { fontFamily: 'monospace', fontSize: 11, lineHeight: 17, color: colors.textMuted },
-    divider: { height: 1, backgroundColor: colors.border },
-    button: {
-      minHeight: 48,
-      paddingHorizontal: 14,
-      paddingVertical: 11,
-      borderRadius: 14,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      borderWidth: 1,
-    },
-    primary: { backgroundColor: colors.primary, borderColor: colors.primary },
-    outline: { backgroundColor: colors.surface, borderColor: colors.border },
-    ghost: { borderColor: 'transparent', backgroundColor: 'transparent' },
-    buttonText: {
-      fontSize: 14,
-      lineHeight: 20,
-      fontWeight: '600',
-      flexShrink: 1,
-      textAlign: 'center',
-    },
-    badge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      alignSelf: 'flex-start',
-      gap: 5,
-      borderRadius: 20,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      flexShrink: 1,
-    },
-    badgeText: { fontSize: 11, lineHeight: 16, fontWeight: '500' },
-  });
+
+export const ui = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 20,
+    overflow: 'hidden',
+    gap: 16,
+  },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  between: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  title: {
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '600',
+    color: colors.text,
+    letterSpacing: -0.2,
+  },
+  body: { fontSize: 14, lineHeight: 22, color: colors.textMuted },
+  label: { fontSize: 12, lineHeight: 18, color: colors.textMuted },
+  mono: { fontFamily: 'monospace', fontSize: 11, lineHeight: 17, color: colors.textMuted },
+  divider: { height: 1, backgroundColor: colors.border },
+  button: {
+    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+  },
+  primary: { backgroundColor: colors.primary, borderColor: colors.primary },
+  outline: { backgroundColor: colors.surface, borderColor: colors.border },
+  ghost: { borderColor: 'transparent', backgroundColor: 'transparent' },
+  buttonText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+    flexShrink: 1,
+    textAlign: 'center',
+  },
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    borderRadius: 20,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    flexShrink: 0,
+  },
+  badgeText: { fontSize: 11, lineHeight: 16, fontWeight: '500' },
+});

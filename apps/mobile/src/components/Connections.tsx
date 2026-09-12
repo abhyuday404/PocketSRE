@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
 import type { ConnectionSettings } from '../settings/connection';
-import { useTheme, type Palette } from '../theme';
-import { Badge, Button, Card, Icon, useUi } from './ui';
+import { colors } from '../theme';
+import { Badge, Button, Card, Icon, ui } from './ui';
 
 export function Connections({
   settings,
@@ -13,9 +13,6 @@ export function Connections({
   busy: boolean;
   onSave: (value: ConnectionSettings) => Promise<void>;
 }) {
-  const { colors } = useTheme();
-  const ui = useUi();
-  const styles = createStyles(colors);
   const [url, setUrl] = useState(settings.url);
   const [token, setToken] = useState('');
   const [focused, setFocused] = useState<'url' | 'token' | null>(null);
@@ -93,20 +90,19 @@ export function Connections({
     </Card>
   );
 }
-const createStyles = (colors: Palette) =>
-  StyleSheet.create({
-    field: { gap: 7 },
-    label: { color: colors.text, fontSize: 12, lineHeight: 18, fontWeight: '500' },
-    input: {
-      color: colors.text,
-      fontSize: 14,
-      minHeight: 52,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderRadius: 14,
-    },
-    focused: { borderColor: colors.primary, backgroundColor: colors.primaryMuted },
-  });
+const styles = StyleSheet.create({
+  field: { gap: 7 },
+  label: { color: colors.text, fontSize: 12, lineHeight: 18, fontWeight: '500' },
+  input: {
+    color: colors.text,
+    fontSize: 13,
+    minHeight: 50,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.muted,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  focused: { borderColor: colors.primary },
+});

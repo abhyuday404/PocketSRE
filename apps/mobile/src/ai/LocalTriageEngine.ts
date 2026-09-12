@@ -1,14 +1,24 @@
-import { diagnosisJsonSchema, type Diagnosis, type IncidentBundle } from '@pocketsre/contracts';
+import {
+  diagnosisJsonSchema,
+  fixProposalJsonSchema,
+  type FixContext,
+  type FixProposal,
+  type Diagnosis,
+  type IncidentBundle,
+} from '@pocketsre/contracts';
 import {
   buildTriagePrompt,
   createDeterministicDiagnosis,
   validateDiagnosis,
   sanitizeBundle,
+  buildFixPrompt,
+  validateFix,
 } from '@pocketsre/incident-engine';
 
 export interface LocalTriageEngine {
   readonly modeLabel: string;
   analyze(bundle: IncidentBundle): Promise<Diagnosis>;
+  proposeFix?(context: FixContext): Promise<FixProposal>;
   release?(): Promise<void>;
 }
 
@@ -21,6 +31,27 @@ export class DeterministicTriageEngine implements LocalTriageEngine {
 }
 
 type LlamaContext = Awaited<ReturnType<(typeof import('llama.rn'))['initLlama']>>;
+
+// llama.cpp rejects bounded string repetitions above 2,000. Keep output bounded
+// by n_predict and enforce the complete string limits in validateFix on both ends.
+function fixSamplingSchema(context: FixContext) {
+  return JSON.parse(
+    JSON.stringify(fixProposalJsonSchema, (key, value) => {
+      if (key === 'maxLength') return undefined;
+      if (key === 'evidenceIds')
+        return {
+          ...value,
+          maxItems: 3,
+          items: {
+            type: 'string',
+            enum: context.bundle.evidence.slice(-12).map((item) => item.id),
+          },
+        };
+      if (key === 'path') return { ...value, enum: context.files.map((file) => file.path) };
+      return value;
+    }),
+  ) as typeof fixProposalJsonSchema;
+}
 
 export class LlamaRnTriageEngine implements LocalTriageEngine {
   readonly modeLabel = 'On-device GGUF model';
@@ -35,16 +66,27 @@ export class LlamaRnTriageEngine implements LocalTriageEngine {
     this.context = await initLlama({
       model: this.modelPath,
       n_ctx: 8192,
+      n_threads: 4,
       n_gpu_layers: accelerator === 'cpu' ? 0 : 99,
       ...(accelerator === 'npu' ? { devices: ['HTP0'] } : {}),
     });
+    if (typeof __DEV__ !== 'undefined' && __DEV__)
+      console.info('PocketSRE model runtime', {
+        requestedAccelerator: accelerator,
+        requestedGpuLayers: accelerator === 'cpu' ? 0 : 99,
+        gpu: this.context.gpu,
+        devices: this.context.devices,
+        reasonNoGPU: this.context.reasonNoGPU,
+      });
     return this.context;
   }
 
   async analyze(bundle: IncidentBundle): Promise<Diagnosis> {
     const context = await this.getContext();
+    await context.clearCache();
     const response = await context.completion({
       messages: [{ role: 'user', content: buildTriagePrompt(bundle) }],
+      enable_thinking: false,
       response_format: {
         type: 'json_schema',
         json_schema: { strict: true, schema: diagnosisJsonSchema },
@@ -70,10 +112,39 @@ export class LlamaRnTriageEngine implements LocalTriageEngine {
     await this.context?.release();
     this.context = null;
   }
+
+  async proposeFix(source: FixContext): Promise<FixProposal> {
+    const context = await this.getContext();
+    const prompt = buildFixPrompt(source);
+    const tokenized = await context.tokenize(prompt);
+    if (tokenized.tokens.length > 5500)
+      throw new Error('Source exceeds the local model context. Select fewer or smaller files.');
+    // Hybrid models retain recurrent state; each incident/source snapshot starts fresh.
+    await context.clearCache();
+    const response = await context.completion({
+      messages: [{ role: 'user', content: prompt }],
+      enable_thinking: false,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { strict: true, schema: fixSamplingSchema(source) },
+      },
+      n_predict: 2400,
+      temperature: 0.1,
+      stop: ['</s>', '<|eot_id|>', '<|im_end|>'],
+    });
+    if (typeof __DEV__ !== 'undefined' && __DEV__)
+      console.info('PocketSRE fix inference timings', response.timings);
+    const start = response.text.indexOf('{');
+    const end = response.text.lastIndexOf('}');
+    if (start < 0 || end <= start) throw new Error('The local model returned no fix.');
+    return validateFix(source, JSON.parse(response.text.slice(start, end + 1))).proposal;
+  }
 }
 
-export function createTriageEngine(): LocalTriageEngine {
-  const modelPath = process.env.EXPO_PUBLIC_MODEL_PATH?.trim();
+export function createTriageEngine(
+  configuredPath = process.env.EXPO_PUBLIC_MODEL_PATH,
+): LocalTriageEngine {
+  const modelPath = configuredPath?.trim();
   return modelPath
     ? new ResilientTriageEngine(new LlamaRnTriageEngine(modelPath))
     : new DeterministicTriageEngine();
@@ -97,5 +168,11 @@ export class ResilientTriageEngine implements LocalTriageEngine {
   }
   async release() {
     await this.primary.release?.();
+  }
+  async proposeFix(context: FixContext): Promise<FixProposal> {
+    if (!this.primary.proposeFix)
+      throw new Error('Select a local model in Settings to draft a code fix.');
+    // Rule-based diagnosis remains available, but never fabricates a replacement patch.
+    return this.primary.proposeFix(context);
   }
 }

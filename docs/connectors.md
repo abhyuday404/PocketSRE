@@ -38,7 +38,7 @@ For Sentry, set `SENTRY_ORGANIZATION`, `SENTRY_PROJECT`, and `SENTRY_AUTH_TOKEN`
 
 Missing provider data never becomes fabricated evidence. Refreshes merge evidence by ID. GitHub commits/patches are deduplicated; Sentry observations include `lastSeen` in their ID so a later occurrence does not erase an earlier observation. The implementation retrieves a bounded recent window (incident start minus one hour, limited to seven days); it does not paginate provider history or operate a monitoring daemon.
 
-Live mode only permits health checks. Rollback remains limited to the local demo service until provider-specific deployment actions and their authorization are implemented.
+Live mode permits health checks and, when separately configured, [reviewed GitHub draft pull requests](github-fixes.md). Rollback remains limited to the local demo service until provider-specific deployment actions and their authorization are implemented.
 
 ## Incident continuity and retention
 

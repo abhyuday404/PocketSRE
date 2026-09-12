@@ -9,12 +9,15 @@ import {
 } from '@pocketsre/contracts';
 import { getRollbackTarget, sanitizeBundle } from '@pocketsre/incident-engine';
 import { AuditStore } from './audit.js';
+import { registerFixRoutes } from './fixes.js';
+import type { FixRepository } from './github-fixes.js';
 
 export type GatewayOptions = {
   demoServiceUrl?: string;
   accessToken?: string;
   auditPath?: string;
   loadBundle?: () => Promise<IncidentBundle>;
+  fixRepository?: FixRepository;
 };
 
 export function createGatewayApp(options: GatewayOptions = {}) {
@@ -59,6 +62,19 @@ export function createGatewayApp(options: GatewayOptions = {}) {
   app.get('/v1/services', async () => ({ services: [(await loadIncidentBundle()).serviceHealth] }));
   app.get('/v1/incidents/current', async () => loadIncidentBundle());
   app.get('/v1/actions/audit', async () => ({ entries: audit.list() }));
+  registerFixRoutes(app, {
+    repository: options.loadBundle ? options.fixRepository : undefined,
+    loadBundle: loadIncidentBundle,
+    audit,
+    claim: () => {
+      if (executing) return false;
+      executing = true;
+      return true;
+    },
+    release: () => {
+      executing = false;
+    },
+  });
 
   for (const operation of ['break', 'reset']) {
     app.post(`/v1/demo/${operation}`, async (_request, reply) => {
@@ -93,6 +109,7 @@ export function createGatewayApp(options: GatewayOptions = {}) {
     if (executing) return reply.code(409).send({ error: 'action_in_progress' });
     if (
       input.action === 'CREATE_GITHUB_ISSUE' ||
+      input.action === 'CREATE_GITHUB_PULL_REQUEST' ||
       (options.loadBundle && input.action !== 'RUN_HEALTH_CHECK')
     ) {
       return reply.code(403).send({ error: 'action_not_enabled' });
