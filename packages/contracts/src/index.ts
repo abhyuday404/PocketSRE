@@ -102,6 +102,7 @@ export const AllowedActionSchema = z.enum([
   'RUN_HEALTH_CHECK',
   'TRIGGER_ROLLBACK_WORKFLOW',
   'CREATE_GITHUB_ISSUE',
+  'CREATE_GITHUB_PULL_REQUEST',
 ]);
 export type AllowedAction = z.infer<typeof AllowedActionSchema>;
 
@@ -152,6 +153,10 @@ export const ActionResultSchema = z.object({
   message: z.string(),
   startedAt: z.string().datetime(),
   completedAt: z.string().datetime().nullable(),
+  pullRequestUrl: z
+    .string()
+    .regex(/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/)
+    .optional(),
 });
 export type ActionResult = z.infer<typeof ActionResultSchema>;
 
@@ -179,3 +184,84 @@ export const InvestigationResultSchema = z.object({
   ),
 });
 export type InvestigationResult = z.infer<typeof InvestigationResultSchema>;
+
+export const RepositoryPathSchema = z
+  .string()
+  .min(1)
+  .max(240)
+  .refine(
+    (path) =>
+      /^[A-Za-z0-9_./-]+$/.test(path) &&
+      path.split('/').every((part) => part && part !== '.' && part !== '..'),
+    'Use a relative repository file path.',
+  );
+const sha = z.string().regex(/^[a-f0-9]{40}$/);
+const citations = z.array(z.string().min(1)).min(1).max(20);
+export const FixProposalSchema = z
+  .object({
+    summary: z.string().min(1).max(1000),
+    evidenceIds: citations,
+    edits: z
+      .array(
+        z
+          .object({
+            path: RepositoryPathSchema,
+            before: z.string().min(1).max(6000),
+            after: z.string().max(6000),
+            reason: z.string().min(1).max(600),
+            evidenceIds: citations,
+          })
+          .strict(),
+      )
+      .max(3),
+  })
+  .strict();
+export type FixProposal = z.infer<typeof FixProposalSchema>;
+export const fixProposalJsonSchema = z.toJSONSchema(FixProposalSchema);
+export const FixContextSchema = z.object({
+  id: z.string().uuid(),
+  repository: z.string(),
+  baseBranch: z.string(),
+  baseCommit: sha,
+  baseTree: sha,
+  expiresAt: z.string().datetime(),
+  bundle: IncidentBundleSchema,
+  files: z
+    .array(
+      z.object({
+        path: RepositoryPathSchema,
+        sha,
+        mode: z.enum(['100644', '100755']),
+        content: z.string().max(12000),
+      }),
+    )
+    .min(1)
+    .max(3),
+});
+export type FixContext = z.infer<typeof FixContextSchema>;
+export const FixDraftSchema = z.object({
+  id: z.string().uuid(),
+  contextId: z.string().uuid(),
+  repository: z.string(),
+  baseBranch: z.string(),
+  baseCommit: sha,
+  expiresAt: z.string().datetime(),
+  proposal: FixProposalSchema,
+  changes: z
+    .array(
+      z.object({
+        path: RepositoryPathSchema,
+        before: z.string(),
+        after: z.string(),
+        mode: z.enum(['100644', '100755']),
+      }),
+    )
+    .min(1)
+    .max(3),
+});
+export type FixDraft = z.infer<typeof FixDraftSchema>;
+export const FixConfigSchema = z.object({
+  enabled: z.boolean(),
+  repository: z.string().nullable(),
+  paths: z.array(RepositoryPathSchema),
+});

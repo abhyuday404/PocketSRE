@@ -5,6 +5,7 @@ import {
   IncidentBundleSchema,
   type AuditEntry,
   type ApprovedActionRequest,
+  type FixContext,
 } from '@pocketsre/contracts';
 import { mergeInvestigation, sanitizeBundle } from '@pocketsre/incident-engine';
 import {
@@ -33,7 +34,7 @@ import {
 } from '../storage/incidents';
 import { pickJsonFile, shareIncidentFile } from '../officekit/bundle';
 
-export function useIncident() {
+export function useIncident(modelPath?: string) {
   const [bundle, setBundle] = useState(createSampleIncident);
   const [analysis, setAnalysis] = useState<SavedDiagnosis | null>(null);
   const diagnosis = analysis?.value ?? null;
@@ -53,7 +54,7 @@ export function useIncident() {
   const ready = useRef(false);
   const mounted = useRef(true);
   const viewEpoch = useRef(0);
-  const engine = useMemo(createTriageEngine, []);
+  const engine = useMemo(() => createTriageEngine(modelPath), [modelPath]);
 
   async function loadHistory(url: string) {
     const result = await readIncidentHistory(url);
@@ -379,7 +380,22 @@ export function useIncident() {
         'All saved snapshots, imports and analyses cleared from this phone. Refresh, import or analyze to save again.',
       );
     });
+  async function proposeFix(context: FixContext) {
+    if (lock.current || !ready.current)
+      throw new Error('Wait for the current operation to finish.');
+    if (!engine.proposeFix)
+      throw new Error('Select a GGUF model in Settings before drafting a code fix.');
+    lock.current = true;
+    setBusy(true);
+    try {
+      return await engine.proposeFix(context);
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  }
   return {
+    proposeFix,
     bundle,
     diagnosis,
     busy,

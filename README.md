@@ -13,6 +13,7 @@ PocketSRE is a phone-first prototype that collects operational evidence, analyze
 - Controlled checkout regression: successful requests → HTTP 500s → approved rollback → verified healthy requests.
 - Read-only GitHub commits/patches and Sentry issues collected independently of health failures, with explicit unknown health and collection availability.
 - Laptop CLI for bundle checks and bounded repository environment-contract inspection.
+- On-device patch drafting with source review and an opt-in GitHub draft-PR action boundary. See [GitHub fixes](docs/github-fixes.md).
 
 ## Workspace
 
@@ -61,7 +62,7 @@ For Wi-Fi, follow [LAN connection setup](docs/connectors.md#lan-connection): ena
 
 ## Local AI
 
-Without a model path, triage is deterministic and requires no download. To enable inference, provision a compatible quantized GGUF file on the device and set its local `file://` URI in `apps/mobile/.env` as `EXPO_PUBLIC_MODEL_PATH`. No model files belong in Git.
+Without a model, triage is deterministic and requires no download. To enable inference, use **Settings → Import GGUF model** on the phone. For development, a local `file://` URI in `EXPO_PUBLIC_MODEL_PATH` remains supported when no device model setting is saved. No model files belong in Git. The [GitHub fix flow](docs/github-fixes.md) uses the same local model for bounded patch drafting.
 
 CPU inference is the default. `EXPO_PUBLIC_ACCELERATOR=gpu` or `npu` opts into experimental hardware paths; compatibility depends on the model, native runtime, and device. NPU acceleration and hackathon-organizer runtime integration are not verified. Load failures or invalid conclusions trigger the labelled fallback.
 
@@ -95,6 +96,6 @@ Set a strong `GATEWAY_ACCESS_TOKEN` in your shell or an untracked root `.env`, t
 
 ## Current limits
 
-Live mode monitors one configured service and permits health checks only. GitHub/Sentry adapters are tested with mocked APIs, not real account credentials. Deployment-platform writes, database administration, background monitoring/push notifications, multi-user authorization, remote coding agents, and automatic fixes are not implemented. Demo evidence is deliberately synthetic; rollback changes the controlled service's state, not a real deployment.
+Live mode monitors one configured service and permits health checks plus explicitly configured, reviewed GitHub draft PRs. Deployment-platform writes, database administration, background monitoring/push notifications, multi-user authorization, remote coding agents, automatic merging, and automatic deployment are not implemented. Demo evidence is deliberately synthetic; rollback changes the controlled service's state, not a real deployment. Model output and live provider permissions require device/account validation in addition to the mocked connector tests.
 
 See [architecture](docs/architecture.md), [live connectors](docs/connectors.md), and [security boundaries](docs/security.md).

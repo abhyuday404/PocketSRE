@@ -4,6 +4,10 @@ import {
   type ApprovedActionRequest,
   type IncidentBundle,
   AuditEntrySchema,
+  FixConfigSchema,
+  FixContextSchema,
+  FixDraftSchema,
+  type FixProposal,
 } from '@pocketsre/contracts';
 import type { ConnectionSettings } from '../settings/connection';
 
@@ -75,4 +79,33 @@ export async function fetchGatewayMode(): Promise<'demo' | 'live'> {
   const payload = (await request('/v1/config')) as { mode: unknown };
   if (payload.mode !== 'demo' && payload.mode !== 'live') throw new Error('Unknown gateway mode.');
   return payload.mode;
+}
+
+export async function fetchFixConfig() {
+  return FixConfigSchema.parse(await request('/v1/fixes/config'));
+}
+export async function fetchFixContext(incidentId: string, paths: string[]) {
+  return FixContextSchema.parse(
+    await request('/v1/fixes/context', {
+      method: 'POST',
+      body: JSON.stringify({ incidentId, paths }),
+    }),
+  );
+}
+export async function prepareFix(contextId: string, proposal: FixProposal) {
+  return FixDraftSchema.parse(
+    await request('/v1/fixes/prepare', {
+      method: 'POST',
+      body: JSON.stringify({ contextId, proposal }),
+    }),
+  );
+}
+export async function publishFix(approval: {
+  draftId: string;
+  requestId: string;
+  approvedAt: string;
+}) {
+  return ActionResultSchema.parse(
+    await request('/v1/fixes/execute', { method: 'POST', body: JSON.stringify(approval) }),
+  );
 }

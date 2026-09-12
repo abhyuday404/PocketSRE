@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -16,15 +17,19 @@ import type { EvidenceEvent } from '@pocketsre/contracts';
 import { chronologicalEvidence } from '@pocketsre/incident-engine';
 import { useIncident } from './hooks/useIncident';
 import { Connections } from './components/Connections';
+import { FixHarness } from './components/FixHarness';
+import { LocalModel } from './components/LocalModel';
+import { loadModelPath } from './settings/model';
 import { Badge, Button, Card, Icon, ui, type IconName } from './components/ui';
 import { colors } from './theme';
 import { HISTORY_LIMITS, type SnapshotSource } from './storage/incidents';
 
-type Tab = 'Overview' | 'Activity' | 'Settings';
+type Tab = 'Overview' | 'Activity' | 'Fixes' | 'Settings';
 type ActivityTab = 'Evidence' | 'Actions' | 'Saved';
 const navigation: { label: Tab; icon: IconName }[] = [
   { label: 'Overview', icon: 'server' },
   { label: 'Activity', icon: 'activity' },
+  { label: 'Fixes', icon: 'terminal' },
   { label: 'Settings', icon: 'settings' },
 ];
 const sourceLabels: Record<string, string> = {
@@ -59,7 +64,9 @@ const actionLabel = (action: string) =>
     ? 'Rollback'
     : action === 'RUN_HEALTH_CHECK'
       ? 'Health check'
-      : 'Issue creation';
+      : action === 'CREATE_GITHUB_PULL_REQUEST'
+        ? 'GitHub pull request'
+        : 'Issue creation';
 
 function EvidenceItem({
   event,
@@ -130,7 +137,13 @@ function EmptyState({ title, description }: { title: string; description: string
 }
 
 function AppContent() {
-  const state = useIncident();
+  const [modelPath, setModelPath] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    void loadModelPath()
+      .then(setModelPath)
+      .catch(() => {});
+  }, []);
+  const state = useIncident(modelPath);
   const {
     bundle,
     diagnosis,
@@ -229,7 +242,9 @@ function AppContent() {
                   ? 'Your service, at a glance.'
                   : tab === 'Activity'
                     ? 'The evidence behind every decision.'
-                    : 'Your workspace. Your connection.'}
+                    : tab === 'Fixes'
+                      ? 'Review a local AI patch before opening a PR.'
+                      : 'Your workspace. Your connection.'}
               </Text>
             </View>
             {tab === 'Overview' ? (
@@ -601,6 +616,15 @@ function AppContent() {
                         </Badge>
                       </View>
                       <Text style={ui.body}>{entry.result.message}</Text>
+                      {entry.result.pullRequestUrl ? (
+                        <Button
+                          label="Open pull request"
+                          variant="outline"
+                          onPress={() => {
+                            void Linking.openURL(entry.result.pullRequestUrl!).catch(() => {});
+                          }}
+                        />
+                      ) : null}
                       <Text style={ui.mono}>
                         {timeLabel(entry.result.startedAt) + ' · ' + entry.serviceId}
                       </Text>
@@ -700,9 +724,23 @@ function AppContent() {
             </>
           ) : null}
 
+          {tab === 'Fixes' ? (
+            <FixHarness
+              key={`${settings.url}:${bundle.incident.id}`}
+              incidentId={bundle.incident.id}
+              connected={live && mode === 'live'}
+              busy={busy}
+              generate={state.proposeFix}
+            />
+          ) : null}
           {tab === 'Settings' ? (
             <>
               <Connections settings={settings} busy={busy} onSave={updateConnection} />
+              <LocalModel
+                path={modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH}
+                busy={busy}
+                onChange={setModelPath}
+              />
               <Card>
                 <View style={ui.between}>
                   <Text style={ui.title}>Data & privacy</Text>

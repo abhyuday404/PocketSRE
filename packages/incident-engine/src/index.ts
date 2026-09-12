@@ -5,3 +5,4 @@ export { redactEvidence, redactText, sanitizeBundle, sanitizeDiagnosis } from '.
 export { validateDiagnosis, type DiagnosisValidationResult } from './validate.js';
 export { getRollbackTarget } from './recovery.js';
 export { mergeInvestigation } from './investigation.js';
+export * from './fixes.js';
