@@ -18,6 +18,7 @@ import { useIncident } from './hooks/useIncident';
 import { Connections } from './components/Connections';
 import { Badge, Button, Card, Icon, ui, type IconName } from './components/ui';
 import { colors } from './theme';
+import { HISTORY_LIMITS, type SnapshotSource } from './storage/incidents';
 
 type Tab = 'Overview' | 'Activity' | 'Settings';
 type ActivityTab = 'Evidence' | 'Actions' | 'Saved';
@@ -26,7 +27,7 @@ const navigation: { label: Tab; icon: IconName }[] = [
   { label: 'Activity', icon: 'activity' },
   { label: 'Settings', icon: 'settings' },
 ];
-const sourceLabels: Record<EvidenceEvent['source'], string> = {
+const sourceLabels: Record<string, string> = {
   github: 'GitHub',
   deployment: 'Deployment',
   sentry: 'Sentry',
@@ -35,6 +36,22 @@ const sourceLabels: Record<EvidenceEvent['source'], string> = {
   investigator: 'Investigation',
   gateway: 'Gateway',
 };
+const snapshotLabels: Record<SnapshotSource, string> = {
+  gateway: 'Saved gateway',
+  'imported-incident': 'Imported incident · offline',
+  'imported-investigation': 'Imported investigation · offline',
+  sample: 'Sample · offline',
+};
+const dateLabel = (timestamp: string) => new Date(timestamp).toLocaleString();
+const healthLabel = (status: string) =>
+  status === 'healthy'
+    ? 'Healthy'
+    : status === 'down'
+      ? 'Down'
+      : status === 'degraded'
+        ? 'Degraded'
+        : 'Unknown';
+const retentionLabel = `Keeps the newest ${HISTORY_LIMITS.perIncident} snapshots per incident, up to ${HISTORY_LIMITS.perScope} per gateway. Imports and samples each have a separate ${HISTORY_LIMITS.perScope}-snapshot limit. Older snapshots and their analyses expire together.`;
 const timeLabel = (timestamp: string) =>
   new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const actionLabel = (action: string) =>
@@ -123,6 +140,10 @@ function AppContent() {
     message,
     settings,
     history,
+    totalSaved,
+    historyNotice,
+    capturedAt,
+    analyzedAt,
     audit,
     canExecute,
     refresh,
@@ -153,7 +174,7 @@ function AppContent() {
       ? 'Demo'
       : 'Live'
     : connection === 'cached'
-      ? 'Offline'
+      ? 'Saved · offline'
       : connection === 'imported'
         ? 'Imported'
         : 'Sample';
@@ -233,6 +254,25 @@ function AppContent() {
               </Text>
             </View>
           ) : null}
+          {tab !== 'Settings' ? (
+            <View style={{ gap: 4 }}>
+              <Text style={ui.label}>{'Evidence generated ' + dateLabel(bundle.generatedAt)}</Text>
+              <Text style={ui.label}>
+                {capturedAt
+                  ? 'Captured on this phone ' + dateLabel(capturedAt)
+                  : connection === 'sample'
+                    ? 'Development sample'
+                    : 'Capture time unavailable in the older cache'}
+              </Text>
+            </View>
+          ) : null}
+          {historyNotice ? (
+            <View style={styles.notice}>
+              <Text accessibilityLiveRegion="polite" style={ui.body}>
+                {historyNotice}
+              </Text>
+            </View>
+          ) : null}
 
           {tab === 'Overview' ? (
             <>
@@ -259,15 +299,22 @@ function AppContent() {
                     </View>
                     <View style={{ flex: 1, gap: 2 }}>
                       <Text style={ui.title}>{bundle.serviceHealth.serviceName}</Text>
-                      <Text style={ui.mono}>{bundle.serviceHealth.version}</Text>
+                      <Text style={ui.mono}>
+                        {bundle.serviceHealth.version ?? 'Unknown release'}
+                      </Text>
                     </View>
                   </View>
-                  <Badge tone={healthy ? 'success' : 'danger'} dot>
-                    {healthy
-                      ? 'Healthy'
-                      : bundle.serviceHealth.status === 'down'
-                        ? 'Down'
-                        : 'Degraded'}
+                  <Badge
+                    tone={
+                      healthy
+                        ? 'success'
+                        : healthLabel(bundle.serviceHealth.status) === 'Unknown'
+                          ? 'warning'
+                          : 'danger'
+                    }
+                    dot
+                  >
+                    {healthLabel(bundle.serviceHealth.status)}
                   </Badge>
                 </View>
                 <View style={ui.divider} />
@@ -330,6 +377,11 @@ function AppContent() {
                 </View>
                 {diagnosis ? (
                   <>
+                    {analyzedAt ? (
+                      <Text style={ui.label}>
+                        {'Analyzed ' + dateLabel(analyzedAt) + ' · tied to this evidence snapshot'}
+                      </Text>
+                    ) : null}
                     <Text selectable style={styles.finding}>
                       {diagnosis.likelyCause ??
                         (healthy ? 'No active incident detected.' : 'More evidence is needed.')}
@@ -556,47 +608,94 @@ function AppContent() {
                   ))
                 ) : (
                   <EmptyState
-                    title="No actions yet"
-                    description="Approved health checks and recovery actions will appear here."
+                    title={live ? 'No actions yet' : 'Action history needs a live connection'}
+                    description={
+                      live
+                        ? 'Approved health checks and recovery actions will appear here.'
+                        : 'Refresh the gateway to load its action history. Reopen offline analyses under Saved.'
+                    }
                   />
                 )
               ) : null}
               {activityTab === 'Saved' ? (
-                history.length ? (
-                  <>
-                    {history.map((item) => (
-                      <Pressable
-                        key={item.incident.id}
-                        accessibilityRole="button"
-                        accessibilityLabel={'Open saved incident: ' + item.incident.title}
-                        disabled={busy}
-                        onPress={() => {
-                          selectHistory(item);
-                          setTab('Overview');
-                        }}
-                        style={({ pressed }) => [ui.card, { opacity: busy || pressed ? 0.5 : 1 }]}
-                      >
-                        <View style={ui.between}>
-                          <Text style={[ui.title, { flex: 1 }]}>{item.incident.title}</Text>
-                          <Icon name="chevron" size={16} />
-                        </View>
-                        <Text style={ui.label}>{new Date(item.generatedAt).toLocaleString()}</Text>
-                        <Badge>{item.incident.status}</Badge>
-                      </Pressable>
-                    ))}
-                    <Button
-                      label="Clear saved history"
-                      variant="ghost"
-                      onPress={() => void clearCache()}
-                      disabled={busy}
+                <>
+                  <Text style={ui.body}>
+                    Saved gateway evidence for the current connection, plus offline imports and
+                    samples.
+                  </Text>
+                  <Text selectable style={ui.mono}>
+                    {settings.url}
+                  </Text>
+                  <Text style={ui.label}>{retentionLabel}</Text>
+                  <Text style={ui.label}>
+                    Identical snapshots reuse their analysis. Reanalyzing replaces only that
+                    snapshot’s analysis.
+                  </Text>
+                  {history.length ? (
+                    <>
+                      {history.map((item) => (
+                        <Pressable
+                          key={item.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={
+                            'Open ' +
+                            snapshotLabels[item.source] +
+                            ': ' +
+                            item.bundle.incident.title +
+                            (item.diagnosis ? ', with saved analysis' : '')
+                          }
+                          disabled={busy}
+                          onPress={() => {
+                            selectHistory(item);
+                            setTab('Overview');
+                          }}
+                          style={({ pressed }) => [ui.card, { opacity: busy || pressed ? 0.5 : 1 }]}
+                        >
+                          <View style={ui.between}>
+                            <Text style={[ui.title, { flex: 1 }]}>
+                              {item.bundle.incident.title}
+                            </Text>
+                            <Icon name="chevron" size={16} />
+                          </View>
+                          <Badge>{snapshotLabels[item.source]}</Badge>
+                          <Text style={ui.label}>
+                            {'Evidence generated ' + dateLabel(item.bundle.generatedAt)}
+                          </Text>
+                          <Text style={ui.label}>
+                            {item.capturedAt
+                              ? 'Captured ' + dateLabel(item.capturedAt)
+                              : 'Capture time unavailable · migrated cache'}
+                          </Text>
+                          <Text style={ui.label}>
+                            {item.bundle.evidence.length +
+                              ' evidence items · ' +
+                              item.bundle.incident.status}
+                          </Text>
+                          <Text style={ui.label}>
+                            {item.diagnosis
+                              ? 'Reopen analysis from ' + dateLabel(item.diagnosis.analyzedAt)
+                              : 'No saved analysis'}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </>
+                  ) : (
+                    <EmptyState
+                      title="Nothing saved here yet"
+                      description="Refresh a gateway or import evidence to save it for offline analysis."
                     />
-                  </>
-                ) : (
-                  <EmptyState
-                    title="Nothing saved yet"
-                    description="Connected incidents are cached here for offline analysis."
+                  )}
+                  <Button
+                    label="Clear all saved data"
+                    variant="ghost"
+                    onPress={() => void clearCache()}
+                    disabled={busy || (!totalSaved && !historyNotice)}
                   />
-                )
+                  <Text style={ui.label}>
+                    Clears snapshots, imports, samples and analyses for every gateway on this phone,
+                    including recovery copies. Exported files remain.
+                  </Text>
+                </>
               ) : null}
             </>
           ) : null}
@@ -615,16 +714,20 @@ function AppContent() {
                 </Text>
                 <View style={ui.divider} />
                 <View style={ui.between}>
-                  <Text style={ui.label}>Saved snapshots</Text>
-                  <Text style={ui.title}>{history.length + ' / 10'}</Text>
+                  <Text style={ui.label}>Saved on this phone</Text>
+                  <Text style={ui.title}>{totalSaved + ' snapshots'}</Text>
                 </View>
+                <Text style={ui.label}>{retentionLabel}</Text>
                 <Button
-                  label="Clear saved history"
+                  label="Clear all saved data"
                   variant="outline"
-                  disabled={busy || !history.length}
+                  disabled={busy || (!totalSaved && !historyNotice)}
                   onPress={() => void clearCache()}
                 />
-                <Text style={ui.label}>This does not delete exported files.</Text>
+                <Text style={ui.label}>
+                  Clears every gateway’s snapshots, offline imports, samples, analyses and recovery
+                  copies. Exported files remain. Refreshing, importing or analyzing saves new data.
+                </Text>
               </Card>
               {bundle.collection?.length ? (
                 <Card>

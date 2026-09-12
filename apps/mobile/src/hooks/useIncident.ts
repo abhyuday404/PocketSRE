@@ -3,8 +3,6 @@ import { Alert } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import {
   IncidentBundleSchema,
-  type IncidentBundle,
-  type Diagnosis,
   type AuditEntry,
   type ApprovedActionRequest,
 } from '@pocketsre/contracts';
@@ -21,42 +19,93 @@ import {
 import { createTriageEngine } from '../ai/LocalTriageEngine';
 import { createSampleIncident } from '../data/sampleIncident';
 import { loadConnection, saveConnection, type ConnectionSettings } from '../settings/connection';
-import { cacheIncident, readIncidentHistory, clearIncidentCache } from '../storage/incidents';
+import {
+  cacheIncident,
+  cacheOfflineIncident,
+  cacheDiagnosis,
+  readIncidentHistory,
+  clearIncidentCache,
+  validatedDiagnosis,
+  snapshotId,
+  type SavedIncident,
+  type SavedDiagnosis,
+  type SnapshotSource,
+} from '../storage/incidents';
 import { pickJsonFile, shareIncidentFile } from '../officekit/bundle';
 
 export function useIncident() {
   const [bundle, setBundle] = useState(createSampleIncident);
-  const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);
+  const [analysis, setAnalysis] = useState<SavedDiagnosis | null>(null);
+  const diagnosis = analysis?.value ?? null;
+  const [savedSnapshot, setSavedSnapshot] = useState<SavedIncident | null>(null);
+  const [source, setSource] = useState<SnapshotSource>('sample');
+  const [capturedAt, setCapturedAt] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [connection, setConnection] = useState<'live' | 'cached' | 'sample' | 'imported'>('sample');
   const [mode, setMode] = useState<'demo' | 'live' | null>(null);
   const [message, setMessage] = useState('Loading saved connection…');
   const [settings, setSettings] = useState<ConnectionSettings>({ url: '', token: '' });
-  const [history, setHistory] = useState<IncidentBundle[]>([]);
+  const [history, setHistory] = useState<SavedIncident[]>([]);
+  const [totalSaved, setTotalSaved] = useState(0);
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const lock = useRef(false);
   const ready = useRef(false);
+  const mounted = useRef(true);
+  const viewEpoch = useRef(0);
   const engine = useMemo(createTriageEngine, []);
 
-  async function persist(current: IncidentBundle, url: string) {
-    await cacheIncident(url, current);
-    setHistory(await readIncidentHistory(url));
+  async function loadHistory(url: string) {
+    const result = await readIncidentHistory(url);
+    if (mounted.current) {
+      setHistory(result.records);
+      setTotalSaved(result.total);
+      setHistoryNotice(result.notice);
+    }
+    return result.records;
+  }
+  function openSaved(item: SavedIncident) {
+    viewEpoch.current++;
+    setBundle(item.bundle);
+    setSavedSnapshot(item);
+    setSource(item.source);
+    setCapturedAt(item.capturedAt);
+    setAnalysis(item.diagnosis);
+    setConnection(
+      item.source === 'gateway' ? 'cached' : item.source === 'sample' ? 'sample' : 'imported',
+    );
+    setMode(null);
+    setAudit([]);
   }
   async function refreshInternal(url: string) {
-    const [current, gatewayMode] = await Promise.all([fetchCurrentIncident(), fetchGatewayMode()]);
+    viewEpoch.current++;
+    const [raw, gatewayMode] = await Promise.all([fetchCurrentIncident(), fetchGatewayMode()]);
+    const current = sanitizeBundle(raw);
+    if (!mounted.current) return current;
     setBundle(current);
-    setDiagnosis(null);
+    setAnalysis(null);
+    setSavedSnapshot(null);
+    setCapturedAt(new Date().toISOString());
+    setSource('gateway');
     setConnection('live');
     setMode(gatewayMode);
     try {
-      await persist(current, url);
+      const saved = await cacheIncident(url, current);
+      if (!mounted.current) return current;
+      setBundle(saved.bundle);
+      setSavedSnapshot(saved);
+      setCapturedAt(saved.capturedAt);
+      setAnalysis(saved.diagnosis);
+      await loadHistory(url);
     } catch {
-      setMessage('Connected, but the offline cache could not be saved.');
+      if (mounted.current)
+        setHistoryNotice('Connected, but this evidence could not be saved for offline use.');
     }
     try {
-      setAudit(await fetchAudit());
+      const entries = await fetchAudit();
+      if (mounted.current) setAudit(entries);
     } catch {
-      setAudit([]);
+      if (mounted.current) setAudit([]);
     }
     return current;
   }
@@ -75,18 +124,17 @@ export function useIncident() {
   }
   useEffect(() => {
     let disposed = false;
+    mounted.current = true;
     void (async () => {
       try {
         const saved = await loadConnection();
         if (disposed) return;
         setSettings(saved);
         configureGateway(saved);
-        const records = await readIncidentHistory(saved.url);
+        const records = await loadHistory(saved.url);
         if (disposed) return;
-        setHistory(records);
         if (records[0]) {
-          setBundle(records[0]);
-          setConnection('cached');
+          openSaved(records[0]);
         }
         try {
           await refreshInternal(saved.url);
@@ -111,7 +159,9 @@ export function useIncident() {
     })();
     return () => {
       disposed = true;
+      mounted.current = false;
       ready.current = false;
+      viewEpoch.current++;
       void engine.release?.().catch(() => {});
     };
   }, [engine]);
@@ -130,23 +180,53 @@ export function useIncident() {
     });
   const analyze = () =>
     run(async () => {
+      viewEpoch.current++;
       setMessage('Analyzing locally…');
-      const result = await engine.analyze(bundle);
-      setDiagnosis(result);
-      setMessage(`Analysis complete · ${engine.modeLabel}`);
+      setAnalysis(null);
+      const result = validatedDiagnosis(await engine.analyze(bundle), bundle);
+      if (!mounted.current) return;
+      const id =
+        savedSnapshot?.id ??
+        (await snapshotId(source, source === 'gateway' ? settings.url : null, bundle));
+      setAnalysis({ snapshotId: id, analyzedAt: new Date().toISOString(), value: result });
+      try {
+        const snapshot =
+          savedSnapshot ??
+          (source === 'gateway'
+            ? await cacheIncident(settings.url, bundle)
+            : await cacheOfflineIncident(bundle, source));
+        const saved = await cacheDiagnosis(snapshot, result);
+        if (!mounted.current) return;
+        setSavedSnapshot(saved);
+        setCapturedAt(saved.capturedAt);
+        setAnalysis(saved.diagnosis);
+        await loadHistory(settings.url);
+        setMessage(`Analysis saved with this evidence · ${engine.modeLabel}`);
+      } catch {
+        setHistoryNotice(
+          'Analysis is available for this session only. It could not be saved on this phone.',
+        );
+        setMessage(`Analysis complete · ${engine.modeLabel}`);
+      }
     });
   const updateConnection = (next: ConnectionSettings) =>
     run(async () => {
       const saved = await saveConnection(next);
+      viewEpoch.current++;
       configureGateway(saved);
       setSettings(saved);
-      setDiagnosis(null);
+      setAnalysis(null);
+      setSavedSnapshot(null);
+      setCapturedAt(null);
       setAudit([]);
       setMode(null);
-      const records = await readIncidentHistory(saved.url);
-      setHistory(records);
-      setBundle(records[0] ?? createSampleIncident());
-      setConnection(records[0] ? 'cached' : 'sample');
+      const records = await loadHistory(saved.url);
+      if (records[0]) openSaved(records[0]);
+      else {
+        setBundle(createSampleIncident());
+        setConnection('sample');
+        setSource('sample');
+      }
       try {
         await refreshInternal(saved.url);
         setMessage('Connection saved and verified.');
@@ -174,10 +254,12 @@ export function useIncident() {
     connection === 'live' &&
     !busy &&
     !!diagnosis?.proposedAction &&
-    (mode === 'demo' || diagnosis.proposedAction.type === 'RUN_HEALTH_CHECK');
+    (diagnosis.proposedAction.type === 'RUN_HEALTH_CHECK' ||
+      (mode === 'demo' && !!bundle.serviceHealth.version));
   function confirmAction() {
     const proposal = diagnosis?.proposedAction;
     if (!canExecute || !proposal) return;
+    const epoch = viewEpoch.current;
     // Capture exactly the proposal displayed by this confirmation, not mutable UI state.
     const approved: ApprovedActionRequest = {
       requestId: randomUUID(),
@@ -191,14 +273,19 @@ export function useIncident() {
     };
     Alert.alert(
       'Approve recovery action',
-      `${proposal.reason}\n\nService: ${proposal.target}\nCurrent release: ${approved.expectedVersion}\nTarget release: ${proposal.parameters.targetRelease ?? 'unchanged'}\nRisk: ${proposal.risk}`,
+      `${proposal.reason}\n\nService: ${proposal.target}\nCurrent release: ${approved.expectedVersion ?? 'Unknown'}\nTarget release: ${proposal.parameters.targetRelease ?? 'unchanged'}\nRisk: ${proposal.risk}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Approve',
           onPress: () =>
             void run(async () => {
-              setDiagnosis(null);
+              if (epoch !== viewEpoch.current)
+                throw new Error(
+                  'Evidence or connection changed. Review the current analysis before approving.',
+                );
+              viewEpoch.current++;
+              setAnalysis(null);
               let actionMessage =
                 'Action outcome uncertain. Check history and health before retrying.';
               try {
@@ -234,27 +321,63 @@ export function useIncident() {
         ? sanitizeBundle(incident.data)
         : mergeInvestigation(bundle, raw);
       setBundle(next);
-      setDiagnosis(null);
+      viewEpoch.current++;
+      setAnalysis(null);
+      setSavedSnapshot(null);
+      setCapturedAt(new Date().toISOString());
+      const importedSource = incident.success ? 'imported-incident' : 'imported-investigation';
+      setSource(importedSource);
       setConnection('imported');
-      // Imported data is intentionally not associated with a trusted live gateway cache.
+      setMode(null);
+      setAudit([]);
+      // Import provenance is never promoted to a trusted live gateway snapshot.
+      try {
+        const saved = await cacheOfflineIncident(next, importedSource);
+        setSavedSnapshot(saved);
+        setBundle(saved.bundle);
+        setCapturedAt(saved.capturedAt);
+        setAnalysis(saved.diagnosis);
+        await loadHistory(settings.url);
+      } catch {
+        setHistoryNotice(
+          'Imported evidence is available for this session only. It could not be saved on this phone.',
+        );
+      }
       setMessage(
         incident.success
           ? 'Incident imported for offline analysis.'
           : 'Investigation merged. Analyze again to include the new evidence.',
       );
     });
-  function selectHistory(item: IncidentBundle) {
-    if (busy) return;
-    setBundle(item);
-    setDiagnosis(null);
-    setConnection('cached');
-    setMessage('Viewing saved evidence. Refresh to return to the current incident.');
+  function selectHistory(item: SavedIncident) {
+    if (busy || lock.current || !ready.current) return;
+    openSaved(item);
+    setMessage(
+      item.diagnosis
+        ? 'Reopened saved analysis with its original evidence. Refresh for the current gateway incident.'
+        : 'Viewing saved evidence. Refresh for the current gateway incident.',
+    );
   }
   const clearCache = () =>
     run(async () => {
-      clearIncidentCache();
+      await clearIncidentCache();
+      viewEpoch.current++;
       setHistory([]);
-      setMessage('Saved incident history cleared from this phone.');
+      setTotalSaved(0);
+      setHistoryNotice(null);
+      setAnalysis(null);
+      setSavedSnapshot(null);
+      if (connection !== 'live') {
+        setBundle(createSampleIncident());
+        setConnection('sample');
+        setSource('sample');
+        setCapturedAt(null);
+        setAudit([]);
+        setMode(null);
+      }
+      setMessage(
+        'All saved snapshots, imports and analyses cleared from this phone. Refresh, import or analyze to save again.',
+      );
     });
   return {
     bundle,
@@ -265,6 +388,10 @@ export function useIncident() {
     message,
     settings,
     history,
+    totalSaved,
+    historyNotice,
+    capturedAt,
+    analyzedAt: analysis?.analyzedAt ?? null,
     audit,
     canExecute,
     refresh,
