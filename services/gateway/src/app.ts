@@ -113,13 +113,24 @@ export function createGatewayApp(options: GatewayOptions = {}) {
       }
       if (
         input.incidentId !== bundle.incident.id ||
-        input.expectedVersion !== bundle.serviceHealth.version
+        (input.action !== 'RUN_HEALTH_CHECK' &&
+          input.expectedVersion !== bundle.serviceHealth.version)
       ) {
         return reply.code(409).send({
           error: 'stale_incident',
           message: 'The incident changed. Refresh before approving.',
         });
       }
+      const healthAge = Date.now() - Date.parse(bundle.serviceHealth.checkedAt);
+      if (
+        input.action !== 'RUN_HEALTH_CHECK' &&
+        (!bundle.serviceHealth.version ||
+          !['degraded', 'down'].includes(bundle.serviceHealth.status) ||
+          healthAge > 60_000 ||
+          healthAge < -5_000 ||
+          bundle.collection?.some((item) => item.source === 'Health' && item.status !== 'ok'))
+      )
+        return reply.code(409).send({ error: 'health_not_verified' });
       const targetRelease = getRollbackTarget(bundle);
       if (
         input.action === 'TRIGGER_ROLLBACK_WORKFLOW' &&
@@ -157,14 +168,23 @@ export function createGatewayApp(options: GatewayOptions = {}) {
           );
         }
         const verified = await loadIncidentBundle();
-        const recovered = verified.serviceHealth.status === 'healthy';
-        entry.result.status =
-          input.action === 'RUN_HEALTH_CHECK' || recovered ? 'succeeded' : 'failed';
+        const verifiedHealthAge = Date.now() - Date.parse(verified.serviceHealth.checkedAt);
+        const healthKnown =
+          verified.serviceHealth.status !== 'unknown' &&
+          verifiedHealthAge <= 60_000 &&
+          verifiedHealthAge >= -5_000 &&
+          !verified.collection?.some((item) => item.source === 'Health' && item.status !== 'ok');
+        const recovered = healthKnown && verified.serviceHealth.status === 'healthy';
+        entry.result.status = (input.action === 'RUN_HEALTH_CHECK' ? healthKnown : recovered)
+          ? 'succeeded'
+          : 'failed';
         entry.result.message =
           input.action === 'RUN_HEALTH_CHECK'
-            ? `Health check: ${verified.serviceHealth.status}. Release ${verified.serviceHealth.version}.`
+            ? healthKnown
+              ? `Health check: ${verified.serviceHealth.status}. ${verified.serviceHealth.version ? `Release ${verified.serviceHealth.version}.` : 'Current release is unknown.'}`
+              : 'Health probe could not establish current service health. Review collection evidence; the release is unverified.'
             : recovered
-              ? `Recovery verified: ${verified.serviceHealth.version} is healthy.`
+              ? `Recovery verified: the service reports healthy${verified.serviceHealth.version ? ` on release ${verified.serviceHealth.version}` : ''}.`
               : 'Rollback responded, but service health has not recovered.';
       } catch {
         entry.result.status = 'failed';

@@ -4,3 +4,6 @@ coverage
 .expo
 pnpm-lock.yaml
 *.gguf
+apps/mobile/android
+apps/mobile/ios
+artifacts

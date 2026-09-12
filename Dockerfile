@@ -9,4 +9,5 @@ RUN pnpm install --frozen-lockfile --ignore-scripts \
     && mkdir -p /data && chown node:node /data
 USER node
 ENV AUDIT_PATH=/data/actions.json
+ENV INCIDENT_PATH=/data/incidents.json
 CMD ["node", "services/gateway/dist/server.js"]

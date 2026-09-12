@@ -8,6 +8,15 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CI: '1'
+      PNPM_WORKERS: '1000'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_NO_DOTENV: '1'
+      EXPO_PUBLIC_MODEL_PATH: ''
+      EXPO_PUBLIC_ACCELERATOR: cpu
+      # JS checks do not need llama.rn's platform archives. Native CI restores them.
+      RNLLAMA_SKIP_POSTINSTALL: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -17,8 +26,11 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --prefer-offline --network-concurrency=2 --child-concurrency=1
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm build
+      - name: Build shared packages and backend
+        run: pnpm build
+      - name: Export Android JavaScript (no native compilation)
+        run: pnpm export:android
