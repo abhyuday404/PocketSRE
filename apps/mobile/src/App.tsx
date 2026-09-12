@@ -11,12 +11,13 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { EvidenceEvent } from '@pocketsre/contracts';
 import { chronologicalEvidence } from '@pocketsre/incident-engine';
 import { useIncident } from './hooks/useIncident';
 import { Connections } from './components/Connections';
-import { Badge, Button, Card, Icon, ui, type IconName } from './components/ui';
+import { Aurora, Badge, Button, Card, Icon, ui, type IconName } from './components/ui';
 import { colors } from './theme';
 
 type Tab = 'Overview' | 'Activity' | 'Settings';
@@ -112,6 +113,7 @@ function EmptyState({ title, description }: { title: string; description: string
 }
 
 function AppContent() {
+  const insets = useSafeAreaInsets();
   const state = useIncident();
   const {
     bundle,
@@ -164,19 +166,9 @@ function AppContent() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-      <StatusBar style="dark" />
-      <View style={styles.topBar}>
-        <View style={ui.row}>
-          <View style={styles.logo}>
-            <Icon name="terminal" color={colors.primaryForeground} size={19} />
-          </View>
-          <Text style={styles.brand}>PocketSRE</Text>
-        </View>
-        <View>
-          <Badge dot tone={live ? 'neutral' : 'warning'}>
-            {originLabel}
-          </Badge>
-        </View>
+      <StatusBar style="light" />
+      <View pointerEvents="none" style={styles.ambientLight}>
+        <Aurora subtle />
       </View>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -192,22 +184,35 @@ function AppContent() {
             <RefreshControl
               refreshing={busy}
               onRefresh={() => void refresh()}
-              tintColor={colors.text}
-              colors={[colors.text]}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+              progressBackgroundColor={colors.muted}
             />
           }
         >
           <View style={styles.pageHeader}>
             <View style={{ flex: 1, gap: 4 }}>
+              <View style={ui.between}>
+                <Text style={styles.eyebrow}>
+                  {tab === 'Overview'
+                    ? 'OPERATIONS / 01'
+                    : tab === 'Activity'
+                      ? 'INCIDENT LOG / 02'
+                      : 'WORKSPACE / 03'}
+                </Text>
+                <Badge dot tone={live ? 'neutral' : 'warning'}>
+                  {originLabel}
+                </Badge>
+              </View>
               <Text accessibilityRole="header" style={styles.pageTitle}>
                 {tab}
               </Text>
               <Text style={ui.body}>
                 {tab === 'Overview'
-                  ? 'Your service, at a glance.'
+                  ? 'Service health. Clear next steps.'
                   : tab === 'Activity'
-                    ? 'The evidence behind every decision.'
-                    : 'Your workspace. Your connection.'}
+                    ? 'Evidence, actions and saved incidents.'
+                    : 'Connections and device storage.'}
               </Text>
             </View>
             {tab === 'Overview' ? (
@@ -237,20 +242,33 @@ function AppContent() {
             <>
               <View style={styles.stats}>
                 <View style={styles.stat}>
-                  <Text style={ui.label}>Connected services</Text>
+                  <Text style={ui.label}>Services connected</Text>
                   <Text style={styles.statValue}>{live ? '1' : '0'}</Text>
                 </View>
                 <View style={styles.statRule} />
                 <View style={styles.stat}>
                   <Text style={ui.label}>{snapshot ? 'Snapshot incidents' : 'Open incidents'}</Text>
-                  <View style={ui.row}>
+                  <View style={[ui.row, { flexWrap: 'wrap' }]}>
                     <Text style={styles.statValue}>{openIncidents}</Text>
-                    {openIncidents ? <Badge tone="danger">Needs attention</Badge> : null}
+                    {openIncidents ? (
+                      <View style={[styles.dot, { backgroundColor: colors.danger }]} />
+                    ) : null}
                   </View>
                 </View>
               </View>
 
-              <Card>
+              <Card aurora style={styles.serviceCard}>
+                <View style={ui.between}>
+                  <Text style={styles.eyebrow}>SERVICE STATUS</Text>
+                  <Icon name="activity" size={20} color={colors.primary} />
+                </View>
+                <Text style={styles.healthTitle}>
+                  {healthy
+                    ? 'All systems normal.'
+                    : bundle.serviceHealth.status === 'down'
+                      ? 'Service interrupted.'
+                      : 'Attention required.'}
+                </Text>
                 <View style={ui.between}>
                   <View style={[ui.row, { flex: 1 }]}>
                     <View style={styles.iconTile}>
@@ -313,11 +331,11 @@ function AppContent() {
                 </View>
               ) : null}
 
-              <Card>
+              <Card style={styles.reviewCard}>
                 <View style={ui.between}>
                   <View style={ui.row}>
                     <Icon name="terminal" size={18} />
-                    <Text style={ui.title}>Local analysis</Text>
+                    <Text style={ui.title}>Incident review</Text>
                   </View>
                   <Badge>
                     {diagnosis
@@ -373,8 +391,8 @@ function AppContent() {
                   <>
                     <Text style={ui.body}>
                       {healthy
-                        ? 'Inspect the latest signals without sending your incident bundle to a cloud model.'
-                        : 'Correlate the timeline and find a likely cause, with evidence for every conclusion.'}
+                        ? 'Review recent changes and health checks on this device.'
+                        : 'Review the timeline to identify a likely cause and the next check.'}
                     </Text>
                     <Button
                       label={busy ? 'Working…' : 'Analyze incident'}
@@ -382,17 +400,15 @@ function AppContent() {
                       disabled={busy}
                       icon="terminal"
                     />
-                    <Text style={styles.small}>
-                      Falls back to local rules when a model is unavailable.
-                    </Text>
+                    <Text style={styles.small}>Works offline with a built-in rules engine.</Text>
                   </>
                 )}
               </Card>
 
               {diagnosis?.proposedAction ? (
-                <Card>
+                <Card style={styles.recoveryCard}>
                   <View style={ui.between}>
-                    <Text style={ui.title}>Suggested action</Text>
+                    <Text style={ui.title}>Recovery plan</Text>
                     <Badge tone="warning">Approval required</Badge>
                   </View>
                   <Text style={styles.finding}>
@@ -440,13 +456,13 @@ function AppContent() {
               {demo ? (
                 <View style={styles.demoPanel}>
                   <View style={ui.between}>
-                    <Text style={ui.title}>Demo sandbox</Text>
+                    <Text style={ui.title}>Recovery demo</Text>
                     <Badge>Isolated</Badge>
                   </View>
                   <Text style={ui.body}>Simulate a checkout failure to try the recovery flow.</Text>
                   <View style={ui.row}>
                     <Button
-                      label="Inject regression"
+                      label="Simulate failure"
                       variant="outline"
                       onPress={() => void breakDemo()}
                       disabled={busy || !healthy}
@@ -476,7 +492,10 @@ function AppContent() {
                     style={[styles.segment, activityTab === item && styles.segmentSelected]}
                   >
                     <Text
-                      style={[styles.segmentText, activityTab === item && { color: colors.text }]}
+                      style={[
+                        styles.segmentText,
+                        activityTab === item && { color: colors.primary },
+                      ]}
                     >
                       {item}
                     </Text>
@@ -642,7 +661,7 @@ function AppContent() {
                 </Card>
               ) : null}
               <Text style={[ui.label, { textAlign: 'center', paddingVertical: 8 }]}>
-                PocketSRE · Development build
+                PocketSRE / iQOO hackathon demo
               </Text>
             </>
           ) : null}
@@ -667,7 +686,15 @@ function AppContent() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      <View style={styles.navigation}>
+      <View accessibilityRole="tablist" style={[styles.navigation, { bottom: insets.bottom + 8 }]}>
+        <LinearGradient
+          pointerEvents="none"
+          accessible={false}
+          colors={['#FFE1C51C', '#FFB98405', '#100D0B33']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0.8, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
         {navigation.map((item) => (
           <Pressable
             key={item.label}
@@ -677,17 +704,17 @@ function AppContent() {
             onPress={() => setTab(item.label)}
             style={({ pressed }) => [styles.navItem, { opacity: pressed ? 0.6 : 1 }]}
           >
-            <View style={[styles.navIcon, tab === item.label && { backgroundColor: colors.muted }]}>
+            <View style={[styles.navIcon, tab === item.label && styles.navIconSelected]}>
               <Icon
                 name={item.icon}
                 size={20}
-                color={tab === item.label ? colors.text : colors.textMuted}
+                color={tab === item.label ? colors.primary : colors.textMuted}
               />
             </View>
             <Text
               style={[
                 styles.navLabel,
-                tab === item.label && { color: colors.text, fontWeight: '600' },
+                tab === item.label && { color: colors.primary, fontWeight: '600' },
               ]}
             >
               {item.label}
@@ -708,56 +735,76 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.surface },
-  topBar: {
-    paddingHorizontal: 20,
-    minHeight: 62,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderColor: colors.border,
+  safeArea: { flex: 1, backgroundColor: colors.background },
+  ambientLight: { position: 'absolute', top: 0, left: 0, right: 0, height: 440 },
+  eyebrow: {
+    color: colors.primary,
+    fontSize: 10,
+    lineHeight: 16,
+    letterSpacing: 1.6,
+    fontWeight: '600',
   },
-  logo: {
-    width: 29,
-    height: 29,
-    borderRadius: 7,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+  serviceCard: {
+    backgroundColor: '#201610',
+    borderColor: colors.accentBorder,
+    borderRadius: 28,
+    padding: 24,
+    gap: 20,
   },
-  brand: { color: colors.text, fontSize: 17, fontWeight: '600', letterSpacing: -0.5 },
+  reviewCard: {
+    backgroundColor: '#181513',
+    borderColor: '#403127',
+    borderTopLeftRadius: 8,
+    gap: 18,
+  },
+  recoveryCard: {
+    backgroundColor: '#201B14',
+    borderColor: colors.accentBorder,
+    borderLeftWidth: 3,
+  },
+  healthTitle: {
+    color: colors.text,
+    fontSize: 28,
+    lineHeight: 35,
+    fontWeight: '600',
+    letterSpacing: -0.8,
+  },
   content: {
     flexGrow: 1,
-    backgroundColor: colors.background,
-    padding: 20,
-    paddingBottom: 24,
-    gap: 16,
+    padding: 22,
+    paddingBottom: 132,
+    gap: 24,
   },
-  pageHeader: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 4 },
+  pageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginTop: 12,
+    marginBottom: 4,
+  },
   pageTitle: {
     color: colors.text,
-    fontSize: 26,
-    lineHeight: 34,
-    letterSpacing: -0.8,
+    fontSize: 42,
+    lineHeight: 52,
+    letterSpacing: -1.8,
     fontWeight: '600',
   },
   iconButton: {
     width: 44,
     height: 44,
-    borderRadius: 8,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  stats: { flexDirection: 'row', paddingBottom: 4, gap: 20 },
+  stats: { flexDirection: 'row', paddingVertical: 8, paddingHorizontal: 4, gap: 20 },
   stat: { flex: 1, gap: 6 },
   statRule: { width: 1, backgroundColor: colors.border, marginVertical: 3 },
   statValue: {
-    fontSize: 27,
-    lineHeight: 34,
+    fontSize: 32,
+    lineHeight: 40,
     fontWeight: '600',
     letterSpacing: -0.7,
     color: colors.text,
@@ -773,14 +820,15 @@ const styles = StyleSheet.create({
   checks: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
   check: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: { width: 5, height: 5, borderRadius: 3 },
-  small: { color: colors.textMuted, fontSize: 10, lineHeight: 16 },
+  small: { color: colors.textMuted, fontSize: 11, lineHeight: 17 },
   incident: {
     gap: 10,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 10,
     backgroundColor: colors.dangerMuted,
-    borderWidth: 1,
-    borderColor: '#FECACA',
+    borderWidth: 0,
+    borderColor: colors.dangerBorder,
+    borderLeftWidth: 3,
   },
   incidentTitle: {
     color: colors.text,
@@ -801,36 +849,58 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     minHeight: 60,
-    paddingVertical: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderColor: colors.border,
     gap: 12,
   },
-  demoPanel: { gap: 10, backgroundColor: colors.muted, padding: 16, borderRadius: 10 },
+  demoPanel: {
+    gap: 12,
+    backgroundColor: 'transparent',
+    padding: 18,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+  },
   notice: {
-    backgroundColor: colors.warningMuted,
+    backgroundColor: colors.surface,
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#FEF08A',
+    borderColor: colors.accentBorder,
   },
   statusLine: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingTop: 2 },
   navigation: {
+    position: 'absolute',
+    left: 28,
+    right: 28,
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 5,
-    backgroundColor: colors.surface,
-    borderTopWidth: 1,
-    borderColor: colors.border,
+    paddingTop: 7,
+    paddingBottom: 8,
+    borderRadius: 48,
+    overflow: 'hidden',
+    backgroundColor: '#211A15D9',
+    borderWidth: 1,
+    borderColor: '#FFE0C32E',
   },
-  navItem: { flex: 1, alignItems: 'center', gap: 3, minHeight: 55 },
+  navItem: { flex: 1, alignItems: 'center', gap: 3, minHeight: 60 },
   navIcon: {
-    width: 48,
-    height: 30,
-    borderRadius: 7,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  navLabel: { fontSize: 10, lineHeight: 16, color: colors.textMuted },
+  navIconSelected: {
+    backgroundColor: '#FFAF7133',
+    borderColor: '#FFD0A654',
+  },
+  navLabel: { fontSize: 11, lineHeight: 17, color: colors.textMuted },
   segmented: { backgroundColor: colors.muted, borderRadius: 8, padding: 3, flexDirection: 'row' },
   segment: {
     flex: 1,
@@ -841,7 +911,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'transparent',
   },
-  segmentSelected: { backgroundColor: colors.surface, borderColor: colors.border },
+  segmentSelected: { backgroundColor: colors.accentMuted, borderColor: colors.accentBorder },
   segmentText: { fontSize: 12, lineHeight: 18, fontWeight: '500', color: colors.textMuted },
   evidenceList: { borderTopWidth: 1, borderColor: colors.border },
   evidenceRow: {
@@ -854,7 +924,7 @@ const styles = StyleSheet.create({
   eventNumber: {
     width: 18,
     fontFamily: 'monospace',
-    color: colors.textMuted,
+    color: colors.primary,
     fontSize: 10,
     lineHeight: 18,
     paddingTop: 1,
