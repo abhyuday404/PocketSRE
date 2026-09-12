@@ -19,6 +19,7 @@ import { chronologicalEvidence } from '@pocketsre/incident-engine';
 import { useIncident } from './hooks/useIncident';
 import { Connections } from './components/Connections';
 import { FixHarness } from './components/FixHarness';
+import { TempChat } from './components/TempChat';
 import { LocalModel } from './components/LocalModel';
 import { loadModelPath } from './settings/model';
 import { Aurora, Badge, Button, Card, Icon, ui, type IconName } from './components/ui';
@@ -175,6 +176,7 @@ function AppContent() {
   } = state;
   const [tab, setTab] = useState<Tab>('Overview');
   const [activityTab, setActivityTab] = useState<ActivityTab>('Evidence');
+  const [agentMode, setAgentMode] = useState<'repository' | 'chat'>('repository');
   const evidence = chronologicalEvidence(bundle);
   const cited = new Set([
     ...(diagnosis?.evidenceIds ?? []),
@@ -760,16 +762,39 @@ function AppContent() {
             />
           ) : null}
           <View style={{ display: tab === 'Agent' ? 'flex' : 'none', gap: 16 }}>
-            <FixHarness
-              key={`agent:${settings.url}:${settings.token}:${modelPath ?? ''}`}
-              mode="agent"
-              incidentId={bundle.incident.id}
-              connected={live && mode === 'live'}
-              busy={busy}
-              modelAvailable={!!(modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH)}
-              generate={state.proposeFix}
-              onOpenSettings={() => setTab('Settings')}
-            />
+            <View style={ui.row}>
+              <Button
+                label="Repository agent"
+                variant={agentMode === 'repository' ? 'primary' : 'outline'}
+                onPress={() => setAgentMode('repository')}
+              />
+              <Button
+                label="Temp chat"
+                variant={agentMode === 'chat' ? 'primary' : 'outline'}
+                onPress={() => setAgentMode('chat')}
+              />
+            </View>
+            <View style={{ display: agentMode === 'repository' ? 'flex' : 'none', gap: 16 }}>
+              <FixHarness
+                key={`agent:${settings.url}:${settings.token}:${modelPath ?? ''}`}
+                mode="agent"
+                incidentId={bundle.incident.id}
+                connected={live && mode === 'live'}
+                busy={busy}
+                modelAvailable={!!(modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH)}
+                generate={state.proposeFix}
+                onOpenSettings={() => setTab('Settings')}
+              />
+            </View>
+            <View style={{ display: agentMode === 'chat' ? 'flex' : 'none', gap: 16 }}>
+              <TempChat
+                key={`chat:${modelPath ?? ''}`}
+                chat={state.chat}
+                busy={busy}
+                modelAvailable={!!(modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH)}
+                onOpenSettings={() => setTab('Settings')}
+              />
+            </View>
           </View>
           {tab === 'Settings' ? (
             <>

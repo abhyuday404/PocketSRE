@@ -66,6 +66,8 @@ Without a model, triage is deterministic and requires no download. To enable inf
 
 Use **Agent** for free-form repository requests: explain code, add a small feature, or improve a function in selected existing files. Follow up in the conversation, review proposed edits, and approve a draft PR. A live gateway with GitHub fixes configured is required for source reads and publication. See the [Agent workflow and current limits](docs/github-fixes.md#agent-tab-repository-requests).
 
+For direct model testing, open **Agent → Temp chat** after importing a GGUF model. Chat works offline without a gateway or repository. It sends your conversation through the model's chat template with no app-added system prompt, evidence requirement, JSON schema, or tools. Replies stream as text; **Stop generating** cancels a reply and **Clear chat** erases the in-memory conversation. Chat is never saved to disk or sent to the gateway. Restarting the app or changing the model also clears it. The model's own behavior still applies; the 8K runtime context reserves room for replies of up to 2,048 tokens. Clear or shorten a conversation if it exceeds the input budget.
+
 CPU inference is the default. `EXPO_PUBLIC_ACCELERATOR=gpu` or `npu` opts into experimental hardware paths; compatibility depends on the model, native runtime, and device. NPU acceleration and hackathon-organizer runtime integration are not verified. Load failures or invalid conclusions trigger the labelled fallback.
 
 ## Laptop investigation

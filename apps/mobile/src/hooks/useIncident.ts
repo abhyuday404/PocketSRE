@@ -17,7 +17,7 @@ import {
   injectDemoRegression,
   resetDemo,
 } from '../api/gateway';
-import { createTriageEngine } from '../ai/LocalTriageEngine';
+import { createTriageEngine, type ChatCompletion } from '../ai/LocalTriageEngine';
 import { createSampleIncident } from '../data/sampleIncident';
 import { loadConnection, saveConnection, type ConnectionSettings } from '../settings/connection';
 import {
@@ -394,7 +394,21 @@ export function useIncident(modelPath?: string) {
       setBusy(false);
     }
   }
+  const chat: ChatCompletion = async (messages, onToken, signal) => {
+    if (lock.current || !ready.current)
+      throw new Error('Wait for the current operation to finish.');
+    if (!engine.chat) throw new Error('Import a GGUF model in Settings to use temporary chat.');
+    lock.current = true;
+    setBusy(true);
+    try {
+      return await engine.chat(messages, onToken, signal);
+    } finally {
+      lock.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  };
   return {
+    chat,
     proposeFix,
     bundle,
     diagnosis,
