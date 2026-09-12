@@ -10,6 +10,18 @@
       "cache": false,
       "persistent": true
     },
+    "export:android": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "env": [
+        "EXPO_PUBLIC_*",
+        "POCKETSRE_ANDROID_PROFILE",
+        "EXPO_NO_DOTENV",
+        "EXPO_NO_TELEMETRY",
+        "CI"
+      ],
+      "outputs": ["dist/**"]
+    },
     "test": {
       "dependsOn": ["^build"],
       "outputs": []

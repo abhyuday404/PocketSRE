@@ -7,15 +7,21 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "turbo run build",
+    "build": "turbo run build --concurrency=1",
+    "export:android": "turbo run export:android --filter=@pocketsre/mobile --concurrency=1",
+    "android:prebuild": "pnpm --filter @pocketsre/mobile android:prebuild",
+    "android:debug": "pnpm --filter @pocketsre/mobile android:debug",
+    "android:internal": "pnpm --filter @pocketsre/mobile android:internal",
+    "android:release": "pnpm --filter @pocketsre/mobile android:release",
     "dev": "turbo run dev",
     "dev:backend": "turbo run dev --filter=@pocketsre/gateway --filter=@pocketsre/demo-service",
     "dev:mobile": "pnpm --filter @pocketsre/contracts build && pnpm --filter @pocketsre/incident-engine build && pnpm --filter @pocketsre/mobile start",
     "investigator": "tsx tools/investigator-cli/src/cli.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "turbo run test",
-    "typecheck": "turbo run typecheck"
+    "test": "pnpm test:android-build && turbo run test --concurrency=1 -- --maxWorkers=1",
+    "test:android-build": "node apps/mobile/scripts/android-build.test.cjs",
+    "typecheck": "turbo run typecheck --concurrency=1"
   },
   "devDependencies": {
     "tsx": "catalog:",

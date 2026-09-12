@@ -22,6 +22,10 @@ Operational APIs -> gateway -> sanitized incident bundle -> phone
 4. Read and write connector interfaces remain separate.
 5. A write operation requires an `ApprovedActionRequest` created after user confirmation.
 
+## Live incident state
+
+The gateway collects health and configured providers independently, then commits a sanitized bundle to a single-service JSON store before returning it. Serialized refreshes merge bounded evidence and preserve the current incident ID/start time through outage, unknown health, restart and recovery. Only observed healthy data resolves an incident; a later outage opens a new one. The existing controlled demo continues to own its synthetic state. See [collection semantics and retention](connectors.md#incident-continuity-and-retention).
+
 ## Local AI modes
 
 - **Llama mode:** `llama.rn` loads a GGUF model and requests schema-shaped JSON.

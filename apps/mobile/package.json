@@ -4,10 +4,14 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
-    "android": "expo run:android",
-    "build": "expo export --platform android",
-    "dev": "expo start --dev-client",
-    "start": "expo start --dev-client",
+    "android": "node scripts/android-build.cjs debug",
+    "android:prebuild": "node scripts/android-build.cjs prebuild",
+    "android:debug": "node scripts/android-build.cjs debug",
+    "android:internal": "node scripts/android-build.cjs internal",
+    "android:release": "node scripts/android-build.cjs release",
+    "export:android": "expo export --platform android --max-workers 1",
+    "dev": "expo start --dev-client --max-workers 1",
+    "start": "expo start --dev-client --max-workers 1",
     "test": "vitest run src --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
@@ -31,6 +35,7 @@
   },
   "devDependencies": {
     "@types/react": "19.2.18",
+    "@types/react-test-renderer": "19.1.0",
     "babel-preset-expo": "57.0.10",
     "react-test-renderer": "19.2.3",
     "typescript": "catalog:",

@@ -7,6 +7,7 @@ import { createDeterministicDiagnosis } from '@pocketsre/incident-engine';
 const mocks = vi.hoisted(() => ({ state: null, get: vi.fn(), set: vi.fn() }));
 vi.mock('expo-secure-store', () => ({ getItemAsync: mocks.get, setItemAsync: mocks.set }));
 vi.mock('./hooks/useIncident', () => ({ useIncident: () => mocks.state }));
+vi.mock('./storage/incidents', () => ({ HISTORY_LIMITS: { perIncident: 5, perScope: 30 } }));
 vi.mock('expo-status-bar', () => ({ StatusBar: 'StatusBar' }));
 vi.mock('react-native-safe-area-context', () => ({
   SafeAreaProvider: 'SafeAreaProvider',
@@ -69,6 +70,10 @@ beforeEach(() => {
     message: 'Sample ready',
     settings: { url: 'http://127.0.0.1:4100', token: '' },
     history: [],
+    totalSaved: 0,
+    historyNotice: null,
+    capturedAt: null,
+    analyzedAt: null,
     audit: [],
     canExecute: false,
     ...Object.fromEntries(
@@ -165,10 +170,38 @@ describe('mobile interaction flows', () => {
     expect(mocks.state.analyze).toHaveBeenCalledOnce();
     await press('Activity');
     await press('Actions');
-    expect(visibleText()).toContain('No actions yet');
+    expect(visibleText()).toContain('Action history needs a live connection');
     await press('Saved');
-    expect(visibleText()).toContain('Nothing saved yet');
+    expect(visibleText()).toContain('Nothing saved here yet');
     await press('Overview');
     expect(visibleText()).toContain('Snapshot health');
+  });
+
+  it('opens the new saved snapshot format while keeping the chosen theme', async () => {
+    const item = {
+      id: 'saved-snapshot',
+      source: 'gateway',
+      gateway: mocks.state.settings.url,
+      capturedAt: mocks.state.bundle.generatedAt,
+      bundle: mocks.state.bundle,
+      diagnosis: {
+        snapshotId: 'saved-snapshot',
+        analyzedAt: mocks.state.bundle.generatedAt,
+        value: createDeterministicDiagnosis(mocks.state.bundle),
+      },
+    };
+    mocks.state.history = [item];
+    mocks.state.totalSaved = 1;
+    await mount();
+    await press('Settings');
+    await press('Dusk theme');
+    expect(visibleText()).toContain('1 snapshots');
+    await press('Activity');
+    await press('Saved');
+    expect(visibleText()).toContain('Reopen analysis from');
+    await press('Open Saved gateway: ' + item.bundle.incident.title + ', with saved analysis');
+    expect(mocks.state.selectHistory).toHaveBeenCalledWith(item);
+    expect(control('Overview').props.accessibilityState.selected).toBe(true);
+    expect(rendered.root.findByType('StatusBar').props.style).toBe('light');
   });
 });
