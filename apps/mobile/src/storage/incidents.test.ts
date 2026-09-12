@@ -83,6 +83,10 @@ it('includes health, release, collection, incident and timestamp changes in snap
       value.serviceHealth.version = 'another-release';
     },
     (value) => {
+      value.serviceHealth.status = 'unknown';
+      value.serviceHealth.version = null;
+    },
+    (value) => {
       value.serviceHealth.checks.database = 'healthy';
     },
     (value) => {
@@ -115,7 +119,13 @@ it('sanitizes evidence, collection failures and every diagnosis prose field befo
   diagnosis.summary += ' password=summary-secret';
   diagnosis.likelyCause += ' secret=cause-secret';
   diagnosis.nextDiagnosticStep += ' api_key=next-secret';
-  diagnosis.alternativeCauses[0]!.statement += ' Bearer alternate-secret';
+  diagnosis.alternativeCauses = [
+    {
+      statement: 'The database may be unavailable independently. Bearer alternate-secret',
+      confidence: 'low',
+      evidenceIds: [snapshot.bundle.evidence.find((event) => event.type === 'exception')!.id],
+    },
+  ];
   diagnosis.proposedAction!.reason += ' token=reason-secret';
   diagnosis.proposedAction!.risk += ' secret=risk-secret';
   await cacheDiagnosis(snapshot, diagnosis);

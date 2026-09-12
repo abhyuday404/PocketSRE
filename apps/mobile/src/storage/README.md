@@ -42,9 +42,9 @@ and removes the active offline analysis from memory. Exported files are not dele
 Subsequent refreshes, imports, or analyses save new data. No backend API or import/export
 wire contract changes are needed: exported incident bundles remain schema version 1.
 
-The diagnosis task owns the forthcoming shared `sanitizeDiagnosis` helper and collection
-redaction. Until integration, the local persistence boundary applies `redactText` and
-validates again. Replace that small adapter with the shared helper when integrating;
-do not change the snapshot association or accept unvalidated diagnoses. The gateway task's
-additive contract fields will be included in snapshot IDs as soon as those contracts are
-integrated. The UI already labels unknown health, null releases, and gateway evidence.
+The shared incident engine sanitizes bundles, collection messages, and diagnosis prose.
+Reference validation runs before and after diagnosis sanitization and again on cache load.
+Unknown health, null releases, gateway evidence, and collection timestamps/citations are
+preserved in the stored snapshot and its identity. The UI labels unknown health and
+releases explicitly. A saved read-only health-check proposal still requires a fresh gateway
+match before approval; an unknown release can never authorize a mutating action.

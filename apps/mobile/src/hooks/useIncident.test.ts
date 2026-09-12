@@ -309,6 +309,78 @@ it('does not show or save an invalid model diagnosis', async () => {
   expect(state.canExecute).toBe(false);
 });
 
+it('persists unknown health and only approves a fresh read-only check with a null release', async () => {
+  const bundle = createSampleIncident();
+  bundle.serviceHealth = { ...bundle.serviceHealth, status: 'unknown', version: null, checks: {} };
+  bundle.evidence = [
+    {
+      id: 'health-unavailable',
+      source: 'health',
+      type: 'health_check_unavailable',
+      timestamp: bundle.generatedAt,
+      title: 'Health unavailable',
+      excerpt: 'The probe timed out; current service health is unknown.',
+      externalUrl: null,
+      metadata: { serviceId: bundle.incident.serviceId },
+    },
+    {
+      id: 'gateway-collection-failed',
+      source: 'gateway',
+      type: 'collection_failed',
+      timestamp: bundle.generatedAt,
+      title: 'Sentry collection unavailable',
+      excerpt: 'Current provider evidence could not be collected.',
+      externalUrl: null,
+      metadata: {},
+    },
+  ];
+  bundle.collection = [
+    {
+      source: 'Health',
+      status: 'unavailable',
+      message: 'The probe timed out.',
+      checkedAt: bundle.generatedAt,
+      evidenceIds: ['health-unavailable'],
+    },
+  ];
+  native.fetchCurrentIncident.mockResolvedValue(bundle);
+  native.fetchGatewayMode.mockResolvedValue('live');
+  await mount();
+  await act(async () => {
+    await state.analyze();
+  });
+  const analysis = state.diagnosis;
+  expect(analysis?.likelyCause).toBeNull();
+  expect(analysis?.confidence).toBe('low');
+  expect(analysis?.proposedAction?.type).toBe('RUN_HEALTH_CHECK');
+  expect(state.canExecute).toBe(true);
+
+  await unmount();
+  native.fetchCurrentIncident.mockRejectedValue(new Error('Offline'));
+  await mount();
+  expect(state.connection).toBe('cached');
+  expect(state.bundle).toEqual(bundle);
+  expect(state.diagnosis).toEqual(analysis);
+  expect(state.canExecute).toBe(false);
+  await act(async () => state.confirmAction());
+  expect(native.alert).not.toHaveBeenCalled();
+
+  native.fetchCurrentIncident.mockResolvedValue(bundle);
+  native.executeApprovedAction.mockResolvedValue({ message: 'Fresh probe completed.' });
+  await act(async () => {
+    await state.refresh();
+  });
+  await act(async () => state.confirmAction());
+  const approve = native.alert.mock.calls[0]![2].find(
+    (button: { text: string }) => button.text === 'Approve',
+  ).onPress;
+  await act(async () => approve());
+  await waitForIdle();
+  expect(native.executeApprovedAction).toHaveBeenCalledWith(
+    expect.objectContaining({ action: 'RUN_HEALTH_CHECK', expectedVersion: null }),
+  );
+});
+
 it('keeps storage failures visible after a successful live refresh or analysis', async () => {
   native.fetchCurrentIncident.mockResolvedValue(createSampleIncident());
   disk.failWrite = 'throw';

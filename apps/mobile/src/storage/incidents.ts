@@ -1,7 +1,7 @@
 import { File, Paths } from 'expo-file-system';
 import { CryptoDigestAlgorithm, digestStringAsync } from 'expo-crypto';
 import { IncidentBundleSchema, type Diagnosis, type IncidentBundle } from '@pocketsre/contracts';
-import { redactText, sanitizeBundle, validateDiagnosis } from '@pocketsre/incident-engine';
+import { sanitizeBundle, sanitizeDiagnosis, validateDiagnosis } from '@pocketsre/incident-engine';
 
 export const HISTORY_LIMITS = { perIncident: 5, perScope: 30 } as const;
 export type SnapshotSource = 'gateway' | 'imported-incident' | 'imported-investigation' | 'sample';
@@ -74,15 +74,7 @@ function canonical(value: unknown): string {
 }
 
 function storedBundle(input: IncidentBundle): IncidentBundle {
-  const bundle = sanitizeBundle(IncidentBundleSchema.parse(input));
-  // Preserve optional collection extensions while sanitizing collector messages.
-  if (bundle.collection)
-    bundle.collection = bundle.collection.map((item) => ({
-      ...item,
-      source: redactText(item.source),
-      message: redactText(item.message),
-    }));
-  return bundle;
+  return sanitizeBundle(IncidentBundleSchema.parse(input));
 }
 
 /** All evidence content, health, collection status and timestamps are included, not just IDs. */
@@ -100,21 +92,7 @@ export function validatedDiagnosis(input: unknown, bundle: IncidentBundle): Diag
   const parsed = validateDiagnosis(input, bundle);
   if (!parsed.success)
     throw new Error('Analysis rejected: it does not match this incident evidence.');
-  // This cache adapter can use the shared sanitizeDiagnosis helper on integration.
-  // Preserve opaque citation/service IDs while redacting generated prose and parameters.
-  const clean = JSON.parse(
-    JSON.stringify(parsed.diagnosis, (_key, value: unknown) =>
-      typeof value === 'string' ? redactText(value) : value,
-    ),
-  ) as Diagnosis;
-  clean.evidenceIds = parsed.diagnosis.evidenceIds;
-  clean.alternativeCauses.forEach((cause, index) => {
-    cause.evidenceIds = parsed.diagnosis.alternativeCauses[index]!.evidenceIds;
-  });
-  if (clean.proposedAction && parsed.diagnosis.proposedAction) {
-    clean.proposedAction.evidenceIds = parsed.diagnosis.proposedAction.evidenceIds;
-    clean.proposedAction.target = parsed.diagnosis.proposedAction.target;
-  }
+  const clean = sanitizeDiagnosis(parsed.diagnosis);
   // A redacted release parameter must not turn into a different executable proposal.
   const sanitized = validateDiagnosis(clean, bundle);
   if (!sanitized.success) throw new Error('Analysis rejected after sanitization.');
