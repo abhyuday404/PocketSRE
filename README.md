@@ -64,6 +64,8 @@ For Wi-Fi, follow [LAN connection setup](docs/connectors.md#lan-connection): ena
 
 Without a model, triage is deterministic and requires no download. To enable inference, use **Settings → Import GGUF model** on the phone. For development, a local `file://` URI in `EXPO_PUBLIC_MODEL_PATH` remains supported when no device model setting is saved. No model files belong in Git. The [GitHub fix flow](docs/github-fixes.md) uses the same local model for bounded patch drafting.
 
+Use **Agent** for free-form repository requests: explain code, add a small feature, or improve a function in selected existing files. Follow up in the conversation, review proposed edits, and approve a draft PR. A live gateway with GitHub fixes configured is required for source reads and publication. See the [Agent workflow and current limits](docs/github-fixes.md#agent-tab-repository-requests).
+
 CPU inference is the default. `EXPO_PUBLIC_ACCELERATOR=gpu` or `npu` opts into experimental hardware paths; compatibility depends on the model, native runtime, and device. NPU acceleration and hackathon-organizer runtime integration are not verified. Load failures or invalid conclusions trigger the labelled fallback.
 
 ## Laptop investigation
