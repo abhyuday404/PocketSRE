@@ -1,5 +1,7 @@
 # Hackathon demo runbook
 
+For the full real-repository → on-device fix → reviewed PR → live deployment story, use the [reviewer demo runbook](reviewer-demo.md). The short flow below uses the built-in synthetic demo service and is not a live deployment demonstration.
+
 ## Before presenting
 
 1. Start the services with `pnpm dev:backend`.
@@ -7,13 +9,13 @@
 3. Install an [internal Android APK](android.md#development-and-internal-testing) for a demo that starts without Metro or a model download. A development APK needs Metro. Complete the [device smoke checklist](android.md#device-smoke-checklist), then use USB/ADB forwarding or configure the LAN token as described in the README.
 4. Verify **Connections**, refresh successfully, and confirm the **DEMO** badge. SAMPLE, CACHED, and IMPORTED are not live connections.
 5. Reset the demo if needed, then analyze once. Confirm whether the UI reports deterministic rules or actual on-device inference; do not describe rules as an LLM.
-6. If demonstrating GGUF inference, load and benchmark the exact model on the presentation device beforehand. CPU/GPU/NPU paths have not been device-validated in this repository.
+6. If demonstrating GGUF inference, load and benchmark the exact model on the presentation device beforehand. The [recorded iQOO 15 smoke test](github-fixes.md#device-smoke-test-2026-09-12) verified CPU inference with Qwen3.5-4B Q6_K. GPU/NPU inference is not verified for this demo.
 
 ## Three-minute story
 
 1. Show the healthy checkout API.
-2. Tap **Inject regression**. The controlled service returns HTTP 500 from `/checkout`; the incident collects synthetic commit, deployment, exception, database, and health evidence.
-3. Tap **Analyze locally**. Explain the likely environment-variable mismatch and point to highlighted cited evidence cards.
+2. Tap **Simulate failure**. The controlled service returns HTTP 500 from `/checkout`; the incident collects synthetic commit, deployment, exception, database, and health evidence.
+3. Tap **Analyze incident**. Explain the likely environment-variable mismatch and point to highlighted cited evidence cards.
 4. Review the proposed rollback, its risk, target release, and confirmation dialog.
 5. Approve once. Show verified green health and the action-history entry. `/checkout` returns 200 again.
 6. Explain that this is a demo action, not a deployment-provider integration. Live connectors remain read-only.

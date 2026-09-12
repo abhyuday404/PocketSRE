@@ -12,7 +12,7 @@ import {
 } from '@pocketsre/contracts';
 import { containsCredential, validateFix } from '@pocketsre/incident-engine';
 import type { AuditStore } from './audit.js';
-import type { FixRepository } from './github-fixes.js';
+import { FixDeploymentError, type FixRepository } from './github-fixes.js';
 
 export function registerFixRoutes(
   app: FastifyInstance,
@@ -55,6 +55,8 @@ export function registerFixRoutes(
     return ids;
   }
   app.get('/v1/fixes/config', async () => ({
+    delivery: options.repository?.delivery ?? 'github-pr',
+    canPublish: options.repository?.canPublish ?? true,
     enabled: !!options.repository,
     repository: options.repository?.repository ?? null,
     paths: options.repository?.paths ?? [],
@@ -84,6 +86,7 @@ export function registerFixRoutes(
       ? {
           ...bundle,
           evidence: [
+            ...bundle.evidence,
             {
               id: `agent:${id}:request`,
               source: 'investigator',
@@ -133,6 +136,7 @@ export function registerFixRoutes(
     if (drafts.size >= 20) throw fail('Too many pending fixes. Wait for older drafts to expire.');
     await current(context);
     const draft: FixDraft = {
+      delivery: repository().delivery ?? 'github-pr',
       id: randomUUID(),
       contextId: context.id,
       repository: context.repository,
@@ -154,6 +158,11 @@ export function registerFixRoutes(
       })
       .strict()
       .parse(request.body);
+    if (repo.canPublish === false)
+      throw fail(
+        'This project has read-only source access. A separate PR credential is required to publish.',
+        403,
+      );
     const fingerprint = JSON.stringify({ kind: 'github-fix', ...input });
     const existing = options.audit.get(input.requestId);
     if (existing) {
@@ -181,12 +190,15 @@ export function registerFixRoutes(
         requestId: input.requestId,
         incidentId: pending.context.bundle.incident.id,
         serviceId: pending.context.bundle.incident.serviceId,
-        action: 'CREATE_GITHUB_PULL_REQUEST',
+        action: repo.delivery === 'local-demo' ? 'DEPLOY_DEMO_FIX' : 'CREATE_GITHUB_PULL_REQUEST',
         targetRelease: pending.context.baseCommit,
         result: {
           actionId: randomUUID(),
           status: 'running',
-          message: `Creating a draft PR in ${repo.repository}.`,
+          message:
+            repo.delivery === 'local-demo'
+              ? 'Testing and deploying the approved demo patch.'
+              : `Creating a draft PR in ${repo.repository}.`,
           startedAt: new Date().toISOString(),
           completedAt: null,
         },
@@ -195,13 +207,23 @@ export function registerFixRoutes(
       pending.consumed = true;
       await options.audit.save(entry, fingerprint);
       try {
-        entry.result.pullRequestUrl = await repo.publish(pending.context, pending.draft);
+        if (repo.delivery === 'local-demo') {
+          if (!repo.deploy) throw new Error('Demo deployment is unavailable.');
+          await repo.deploy(pending.context, pending.draft);
+        } else entry.result.pullRequestUrl = await repo.publish(pending.context, pending.draft);
         entry.result.status = 'succeeded';
         entry.result.message =
-          'Draft pull request created. Tests, merge, and deployment remain pending.';
-      } catch {
+          repo.delivery === 'local-demo'
+            ? 'Demo fix deployed. Independent checkout tests and live HTTP health checks passed. Refresh Overview to see recovery.'
+            : 'Draft pull request created. Tests, merge, and deployment remain pending.';
+      } catch (error) {
         entry.result.status = 'failed';
-        entry.result.message = `GitHub outcome is unverified. Check ${repo.repository} for branch pocketsre/fix-${pending.draft.id} and its PR before trying again.`;
+        entry.result.message =
+          repo.delivery === 'local-demo'
+            ? error instanceof FixDeploymentError
+              ? error.message
+              : 'Demo deployment was not verified. Refresh health and inspect the source before preparing another fix.'
+            : `GitHub outcome is unverified. Check ${repo.repository} for branch pocketsre/fix-${pending.draft.id} and its PR before trying again.`;
       }
       entry.result.completedAt = new Date().toISOString();
       await options.audit.save(entry, fingerprint);

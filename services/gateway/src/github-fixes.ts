@@ -5,7 +5,12 @@ import { containsCredential, isFixPathAllowed } from '@pocketsre/incident-engine
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const commitSchema = z.object({ sha, tree: z.object({ sha }) });
 const objectSchema = z.object({ sha });
+// Only explicitly curated deployment messages may cross the gateway boundary.
+export class FixDeploymentError extends Error {}
 export interface FixRepository {
+  readonly canPublish?: boolean;
+  readonly delivery?: 'local-demo';
+  deploy?(context: FixContext, draft: FixDraft): Promise<void>;
   readonly repository: string;
   readonly paths: string[];
   readSource(

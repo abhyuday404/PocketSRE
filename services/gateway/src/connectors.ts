@@ -179,7 +179,7 @@ export interface LiveBundleOptions {
   serviceName: string;
   healthToken?: string;
   incidentPath?: string;
-  connectors: EvidenceConnector[];
+  connectors: EvidenceConnector[] | (() => EvidenceConnector[]);
   fetcher?: Fetch;
   now?: () => number;
   healthTimeoutMs?: number;
@@ -310,6 +310,8 @@ export function createLiveBundleLoader(options: LiveBundleOptions) {
   let storageWarningRecorded = false;
 
   async function collect(): Promise<IncidentBundle> {
+    const connectors =
+      typeof options.connectors === 'function' ? options.connectors() : options.connectors;
     await store.load();
     const previous = store.current;
     const started = now();
@@ -325,7 +327,7 @@ export function createLiveBundleLoader(options: LiveBundleOptions) {
     const [healthResult, results] = await Promise.all([
       collectHealth(options),
       Promise.allSettled(
-        options.connectors.map(async (connector) =>
+        connectors.map(async (connector) =>
           z.array(EvidenceEventSchema).parse(await connector.collect(since)),
         ),
       ),
@@ -366,7 +368,7 @@ export function createLiveBundleLoader(options: LiveBundleOptions) {
     const evidence: EvidenceEvent[] = [observation.evidence];
     const collection: CollectionEntry[] = [observation.collection];
     results.forEach((result, index) => {
-      const source = options.connectors[index]!.name;
+      const source = connectors[index]!.name;
       if (result.status === 'fulfilled') {
         evidence.push(...result.value);
         collection.push({
