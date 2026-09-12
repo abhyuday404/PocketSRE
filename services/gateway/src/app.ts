@@ -11,8 +11,11 @@ import { getRollbackTarget, sanitizeBundle } from '@pocketsre/incident-engine';
 import { AuditStore } from './audit.js';
 import { registerFixRoutes } from './fixes.js';
 import type { FixRepository } from './github-fixes.js';
+import { registerProjectRoutes, type ProjectOptions } from './projects.js';
+import { ProjectRequestError } from './github-account.js';
 
 export type GatewayOptions = {
+  projects?: ProjectOptions;
   demoServiceUrl?: string;
   accessToken?: string;
   auditPath?: string;
@@ -21,6 +24,8 @@ export type GatewayOptions = {
 };
 
 export function createGatewayApp(options: GatewayOptions = {}) {
+  if (options.projects && !options.accessToken)
+    throw new Error('Project connections require a gateway access token.');
   const app = Fastify({ logger: false, bodyLimit: 32_768 });
   const demoServiceUrl = options.demoServiceUrl ?? 'http://127.0.0.1:4200';
   const audit = new AuditStore(options.auditPath);
@@ -53,6 +58,7 @@ export function createGatewayApp(options: GatewayOptions = {}) {
     return sanitizeBundle(IncidentBundleSchema.parse(raw));
   }
   app.get('/health', async () => ({ service: 'pocketsre-gateway', status: 'healthy' }));
+  registerProjectRoutes(app, options.projects);
   app.get('/v1/config', async () => ({
     mode: options.loadBundle ? 'live' : 'demo',
     actions: options.loadBundle
@@ -110,6 +116,7 @@ export function createGatewayApp(options: GatewayOptions = {}) {
     if (
       input.action === 'CREATE_GITHUB_ISSUE' ||
       input.action === 'CREATE_GITHUB_PULL_REQUEST' ||
+      input.action === 'DEPLOY_DEMO_FIX' ||
       (options.loadBundle && input.action !== 'RUN_HEALTH_CHECK')
     ) {
       return reply.code(403).send({ error: 'action_not_enabled' });
@@ -217,6 +224,10 @@ export function createGatewayApp(options: GatewayOptions = {}) {
   });
 
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ProjectRequestError)
+      return reply
+        .code(error.statusCode)
+        .send({ error: 'project_request_failed', message: error.message });
     const status =
       error && typeof error === 'object' && 'statusCode' in error ? Number(error.statusCode) : 502;
     reply.code(status >= 400 && status < 500 ? status : 502).send({

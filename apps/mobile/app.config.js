@@ -8,8 +8,21 @@ module.exports = ({ config }) => {
     name: profile === 'production' ? config.name : `${config.name} ${profile}`,
     slug: `${config.slug}${suffix.replace('.', '-')}`,
     scheme: `pocketsre${suffix.replace('.', '-')}`,
-    android: { ...config.android, package: `${config.android.package}${suffix}` },
+    android: {
+      ...config.android,
+      package: `${config.android.package}${suffix}`,
+      ...(process.env.POCKETSRE_GOOGLE_SERVICES_FILE
+        ? { googleServicesFile: process.env.POCKETSRE_GOOGLE_SERVICES_FILE }
+        : {}),
+    },
+    extra: {
+      ...config.extra,
+      ...(process.env.EXPO_PUBLIC_EAS_PROJECT_ID
+        ? { eas: { projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID } }
+        : {}),
+    },
     plugins: [
+      'expo-notifications',
       ...config.plugins.map((plugin) =>
         Array.isArray(plugin) && plugin[0] === 'expo-build-properties'
           ? [

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export * from './projects.js';
 
 export const SeveritySchema = z.enum(['info', 'warning', 'critical']);
 export type Severity = z.infer<typeof SeveritySchema>;
@@ -103,6 +104,7 @@ export const AllowedActionSchema = z.enum([
   'TRIGGER_ROLLBACK_WORKFLOW',
   'CREATE_GITHUB_ISSUE',
   'CREATE_GITHUB_PULL_REQUEST',
+  'DEPLOY_DEMO_FIX',
 ]);
 export type AllowedAction = z.infer<typeof AllowedActionSchema>;
 
@@ -258,6 +260,7 @@ export const FixContextSchema = z.object({
 });
 export type FixContext = z.infer<typeof FixContextSchema>;
 export const FixDraftSchema = z.object({
+  delivery: z.enum(['github-pr', 'local-demo']).optional(),
   id: z.string().uuid(),
   contextId: z.string().uuid(),
   repository: z.string(),
@@ -279,6 +282,8 @@ export const FixDraftSchema = z.object({
 });
 export type FixDraft = z.infer<typeof FixDraftSchema>;
 export const FixConfigSchema = z.object({
+  canPublish: z.boolean().default(true),
+  delivery: z.enum(['github-pr', 'local-demo']).optional(),
   enabled: z.boolean(),
   repository: z.string().nullable(),
   paths: z.array(RepositoryPathSchema),

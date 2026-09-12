@@ -1,5 +1,10 @@
 import { createGatewayApp } from './app.js';
 import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { VercelProvider } from './providers.js';
+import { ExpoPushTransport } from './project-monitor.js';
+import { GitHubAccount } from './github-account.js';
+import { ProjectStore } from './projects.js';
 import { GitHubFixRepository } from './github-fixes.js';
 import { createGitHubCliFetch } from './github-cli.js';
 import {
@@ -62,6 +67,27 @@ const loadBundle =
       })
     : undefined;
 const app = createGatewayApp({
+  projects:
+    process.env.GITHUB_APP_CLIENT_ID || process.env.GITHUB_PROJECTS_TOKEN
+      ? {
+          github: new GitHubAccount({
+            clientId: process.env.GITHUB_APP_CLIENT_ID,
+            appSlug: process.env.GITHUB_APP_SLUG,
+            token: process.env.GITHUB_PROJECTS_TOKEN,
+          }),
+          store: new ProjectStore(resolve(process.env.PROJECTS_PATH ?? '.pocketsre-data/projects')),
+          vercel: new VercelProvider(process.env.VERCEL_TOKEN, process.env.VERCEL_TEAM_ID),
+          monitor: {
+            path: resolve(homedir(), '.pocketsre', `monitor-${port}.json`),
+            push: new ExpoPushTransport(process.env.EXPO_PUSH_ACCESS_TOKEN),
+          },
+          fixToken: process.env.GITHUB_PROJECT_FIX_TOKEN,
+          allowedHealthOrigins: (process.env.PROJECT_HEALTH_ORIGINS ?? '')
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean),
+        }
+      : undefined,
   fixRepository:
     mode === 'live' &&
     (process.env.GITHUB_FIX_TOKEN || (githubFetcher && process.env.GITHUB_FIX_PATHS))

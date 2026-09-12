@@ -100,6 +100,7 @@ describe('GitHub fix action boundary', () => {
     const context = response.json() as FixContext;
     expect(context.task).toEqual(task);
     expect(context.bundle.evidence.map((event) => event.source)).toEqual([
+      'health',
       'investigator',
       'github',
     ]);
@@ -118,7 +119,7 @@ describe('GitHub fix action boundary', () => {
       (
         await post('/v1/fixes/prepare', {
           contextId: context.id,
-          proposal: { ...change, evidenceIds: ['failure'] },
+          proposal: { ...change, evidenceIds: ['forged-evidence'] },
         })
       ).statusCode,
     ).not.toBe(200);

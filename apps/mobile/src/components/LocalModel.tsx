@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Text } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
-import { saveModelPath } from '../settings/model';
+import { rememberModel, saveModelPath } from '../settings/model';
+import { ModelPicker } from './ModelPicker';
 import { Badge, Button, Card, ui } from './ui';
 
 export function LocalModel({
@@ -37,6 +38,7 @@ export function LocalModel({
       }
       const model = new File(Paths.document, `pocketsre-model-${Date.now()}.gguf`);
       source.move(model);
+      await rememberModel(model.uri, asset.name);
       await saveModelPath(model.uri);
       onChange(model.uri);
       setMessage('Model imported. The next analysis loads it on this phone.');
@@ -50,6 +52,7 @@ export function LocalModel({
     <Card>
       <Text style={ui.title}>On-device model</Text>
       <Badge>{path ? 'Model selected' : 'Local rules'}</Badge>
+      <ModelPicker path={path} busy={busy || working} onChange={onChange} />
       <Text style={ui.body}>
         A GGUF file contains the AI model’s weights. Import a compatible model to analyze evidence
         and draft small code fixes offline. GitHub operations still need a connection.
