@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -16,8 +17,8 @@ import type { EvidenceEvent } from '@pocketsre/contracts';
 import { chronologicalEvidence } from '@pocketsre/incident-engine';
 import { useIncident } from './hooks/useIncident';
 import { Connections } from './components/Connections';
-import { Badge, Button, Card, Icon, ui, type IconName } from './components/ui';
-import { colors } from './theme';
+import { Badge, Button, Card, Icon, useUi, type IconName } from './components/ui';
+import { ThemeProvider, useTheme, themes, type ThemeName, type Palette } from './theme';
 
 type Tab = 'Overview' | 'Activity' | 'Settings';
 type ActivityTab = 'Evidence' | 'Actions' | 'Saved';
@@ -52,6 +53,9 @@ function EvidenceItem({
   index: number;
   cited: boolean;
 }) {
+  const { colors } = useTheme();
+  const ui = useUi();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [expanded, setExpanded] = useState(false);
   return (
     <View style={styles.evidenceRow}>
@@ -100,6 +104,9 @@ function EvidenceItem({
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) {
+  const { colors } = useTheme();
+  const ui = useUi();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.empty}>
       <View style={styles.iconTile}>
@@ -112,6 +119,12 @@ function EmptyState({ title, description }: { title: string; description: string
 }
 
 function AppContent() {
+  const { colors, dark, name: themeName, setTheme, saveError } = useTheme();
+  const ui = useUi();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const [query, setQuery] = useState('');
+  const [citedOnly, setCitedOnly] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const state = useIncident();
   const {
     bundle,
@@ -143,6 +156,14 @@ function AppContent() {
     ...(diagnosis?.alternativeCauses.flatMap((cause) => cause.evidenceIds) ?? []),
     ...(diagnosis?.proposedAction?.evidenceIds ?? []),
   ]);
+  const filteredEvidence = evidence.filter(
+    (event) =>
+      (!citedOnly || cited.has(event.id)) &&
+      [event.title, event.excerpt, event.id, sourceLabels[event.source]]
+        .join(' ')
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+  );
   const healthy = bundle.serviceHealth.status === 'healthy';
   const live = connection === 'live';
   const demo = live && mode === 'demo';
@@ -157,23 +178,37 @@ function AppContent() {
         ? 'Imported'
         : 'Sample';
   const showEvidence = () => {
+    setQuery('');
+    setCitedOnly(false);
     setActivityTab('Evidence');
     setTab('Activity');
   };
   const openIncidents = bundle.incident.status === 'resolved' ? 0 : 1;
+  const refreshHealth = async () => {
+    if (busy || refreshing) return;
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-      <StatusBar style="dark" />
+      <StatusBar style={dark ? 'light' : 'dark'} />
       <View style={styles.topBar}>
         <View style={ui.row}>
           <View style={styles.logo}>
             <Icon name="terminal" color={colors.primaryForeground} size={19} />
           </View>
-          <Text style={styles.brand}>PocketSRE</Text>
+          <View>
+            <Text style={styles.brand}>PocketSRE</Text>
+            <Text style={styles.brandCaption}>A little clarity. A calmer on-call.</Text>
+          </View>
         </View>
         <View>
-          <Badge dot tone={live ? 'neutral' : 'warning'}>
+          <Badge dot tone={live ? 'success' : 'warning'}>
             {originLabel}
           </Badge>
         </View>
@@ -184,27 +219,31 @@ function AppContent() {
       >
         <ScrollView
           key={tab}
-          style={{ flex: 1 }}
+          style={{ flex: 1, backgroundColor: colors.background }}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={busy}
-              onRefresh={() => void refresh()}
-              tintColor={colors.text}
-              colors={[colors.text]}
+              refreshing={refreshing}
+              onRefresh={() => void refreshHealth()}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
             />
           }
         >
           <View style={styles.pageHeader}>
             <View style={{ flex: 1, gap: 4 }}>
               <Text accessibilityRole="header" style={styles.pageTitle}>
-                {tab}
+                {tab === 'Overview'
+                  ? 'Overview'
+                  : tab === 'Activity'
+                    ? 'Follow the signals'
+                    : 'Make it yours'}
               </Text>
               <Text style={ui.body}>
                 {tab === 'Overview'
-                  ? 'Your service, at a glance.'
+                  ? 'Stay informed. Take the next step with confidence.'
                   : tab === 'Activity'
                     ? 'The evidence behind every decision.'
                     : 'Your workspace. Your connection.'}
@@ -216,10 +255,10 @@ function AppContent() {
                 accessibilityLabel="Refresh service health"
                 accessibilityState={{ disabled: busy }}
                 disabled={busy}
-                onPress={() => void refresh()}
+                onPress={() => void refreshHealth()}
                 style={({ pressed }) => [styles.iconButton, { opacity: busy || pressed ? 0.4 : 1 }]}
               >
-                <Icon name="refresh" size={18} />
+                <Icon name="refresh" size={18} color={colors.primary} />
               </Pressable>
             ) : null}
           </View>
@@ -227,25 +266,59 @@ function AppContent() {
           {snapshot ? (
             <View style={styles.notice}>
               <Text style={[ui.body, { color: colors.warning }]}>
-                {originLabel +
-                  ' snapshot · Health may have changed. Refresh live data before taking action.'}
+                {originLabel + ' snapshot · Refresh to see current service health.'}
               </Text>
             </View>
           ) : null}
 
           {tab === 'Overview' ? (
             <>
+              <View style={styles.hero}>
+                <View style={ui.between}>
+                  <View style={styles.heroIcon}>
+                    <Icon name={healthy ? 'check' : 'activity'} size={26} color={colors.primary} />
+                  </View>
+                  <Badge tone={healthy ? 'success' : 'warning'}>
+                    {snapshot ? 'Snapshot health' : healthy ? 'All clear' : 'Let’s take a look'}
+                  </Badge>
+                </View>
+                <Text style={styles.heroTitle}>
+                  {healthy ? 'Room to breathe.' : 'Clarity starts here.'}
+                </Text>
+                <Text style={ui.body}>
+                  {snapshot
+                    ? 'Explore this snapshot, or reconnect for the latest signals.'
+                    : healthy
+                      ? 'Your service is healthy. Explore the evidence whenever you need it.'
+                      : 'Your service needs attention. Let’s work through the evidence, one step at a time.'}
+                </Text>
+                <View style={ui.row}>
+                  <Button
+                    label={
+                      diagnosis ? 'View evidence' : healthy ? 'Analyze service' : 'Analyze incident'
+                    }
+                    icon={diagnosis ? 'activity' : 'terminal'}
+                    disabled={busy}
+                    loading={busy}
+                    onPress={diagnosis ? showEvidence : () => void analyze()}
+                    style={{ flex: 1 }}
+                  />
+                  <Button label="Timeline" variant="outline" onPress={showEvidence} />
+                </View>
+              </View>
               <View style={styles.stats}>
                 <View style={styles.stat}>
                   <Text style={ui.label}>Connected services</Text>
                   <Text style={styles.statValue}>{live ? '1' : '0'}</Text>
                 </View>
-                <View style={styles.statRule} />
+
                 <View style={styles.stat}>
                   <Text style={ui.label}>{snapshot ? 'Snapshot incidents' : 'Open incidents'}</Text>
                   <View style={ui.row}>
                     <Text style={styles.statValue}>{openIncidents}</Text>
-                    {openIncidents ? <Badge tone="danger">Needs attention</Badge> : null}
+                    {openIncidents ? (
+                      <Text style={[ui.label, { color: colors.danger }]}>To review</Text>
+                    ) : null}
                   </View>
                 </View>
               </View>
@@ -317,7 +390,7 @@ function AppContent() {
                 <View style={ui.between}>
                   <View style={ui.row}>
                     <Icon name="terminal" size={18} />
-                    <Text style={ui.title}>Local analysis</Text>
+                    <Text style={ui.title}>Find the next step</Text>
                   </View>
                   <Badge>
                     {diagnosis
@@ -377,13 +450,14 @@ function AppContent() {
                         : 'Correlate the timeline and find a likely cause, with evidence for every conclusion.'}
                     </Text>
                     <Button
-                      label={busy ? 'Working…' : 'Analyze incident'}
+                      label={busy ? 'Working…' : healthy ? 'Analyze service' : 'Analyze incident'}
+                      loading={busy}
                       onPress={() => void analyze()}
                       disabled={busy}
                       icon="terminal"
                     />
                     <Text style={styles.small}>
-                      Falls back to local rules when a model is unavailable.
+                      Private by design · Analysis stays on this device
                     </Text>
                   </>
                 )}
@@ -440,13 +514,13 @@ function AppContent() {
               {demo ? (
                 <View style={styles.demoPanel}>
                   <View style={ui.between}>
-                    <Text style={ui.title}>Demo sandbox</Text>
+                    <Text style={ui.title}>A safe place to practice</Text>
                     <Badge>Isolated</Badge>
                   </View>
                   <Text style={ui.body}>Simulate a checkout failure to try the recovery flow.</Text>
                   <View style={ui.row}>
                     <Button
-                      label="Inject regression"
+                      label="Simulate an incident"
                       variant="outline"
                       onPress={() => void breakDemo()}
                       disabled={busy || !healthy}
@@ -486,23 +560,72 @@ function AppContent() {
               {activityTab === 'Evidence' ? (
                 <>
                   <View style={ui.between}>
-                    <Text style={ui.label}>{evidence.length + ' events · oldest first'}</Text>
+                    <Text style={ui.label}>
+                      {filteredEvidence.length +
+                        ' of ' +
+                        evidence.length +
+                        ' events · oldest first'}
+                    </Text>
                     <Badge>{cited.size + ' cited'}</Badge>
                   </View>
+                  <View style={styles.searchBox}>
+                    <TextInput
+                      accessibilityLabel="Search evidence"
+                      value={query}
+                      onChangeText={setQuery}
+                      placeholder="Search signals, sources, or evidence IDs"
+                      placeholderTextColor={colors.textMuted}
+                      selectionColor={colors.primary}
+                      style={styles.searchInput}
+                      autoCorrect={false}
+                      returnKeyType="search"
+                    />
+                    {query ? (
+                      <Button label="Clear" variant="ghost" onPress={() => setQuery('')} />
+                    ) : null}
+                  </View>
+                  <Pressable
+                    accessibilityRole="checkbox"
+                    accessibilityLabel="Show only cited evidence"
+                    accessibilityState={{ checked: citedOnly }}
+                    onPress={() => setCitedOnly(!citedOnly)}
+                    style={[
+                      styles.filter,
+                      citedOnly && {
+                        backgroundColor: colors.primaryMuted,
+                        borderColor: colors.primary,
+                      },
+                    ]}
+                  >
+                    <Icon
+                      name="check"
+                      size={16}
+                      color={citedOnly ? colors.primary : colors.textMuted}
+                    />
+                    <Text
+                      style={[ui.label, { color: citedOnly ? colors.primary : colors.textMuted }]}
+                    >
+                      Cited in analysis only
+                    </Text>
+                  </Pressable>
                   <View style={styles.evidenceList}>
-                    {evidence.length ? (
-                      evidence.map((event, index) => (
+                    {filteredEvidence.length ? (
+                      filteredEvidence.map((event) => (
                         <EvidenceItem
                           key={event.id}
                           event={event}
-                          index={index}
+                          index={evidence.indexOf(event)}
                           cited={cited.has(event.id)}
                         />
                       ))
                     ) : (
                       <EmptyState
-                        title="No evidence yet"
-                        description="Refresh the service to collect the latest signals."
+                        title={evidence.length ? 'No matching signals' : 'No evidence yet'}
+                        description={
+                          evidence.length
+                            ? 'Try another search or turn off the cited-only filter.'
+                            : 'Refresh the service to collect the latest signals.'
+                        }
                       />
                     )}
                   </View>
@@ -602,6 +725,63 @@ function AppContent() {
 
           {tab === 'Settings' ? (
             <>
+              <Card>
+                <View style={ui.row}>
+                  <Icon name="settings" color={colors.primary} />
+                  <Text style={ui.title}>Choose your atmosphere</Text>
+                </View>
+                <Text style={ui.body}>
+                  A little comfort for your on-call hours. Your choice is saved on this device.
+                </Text>
+                <View accessibilityRole="radiogroup" style={{ gap: 10 }}>
+                  {(Object.keys(themes) as ThemeName[]).map((key) => (
+                    <Pressable
+                      key={key}
+                      accessibilityRole="radio"
+                      accessibilityLabel={themes[key].label + ' theme'}
+                      accessibilityState={{ checked: themeName === key }}
+                      onPress={() => setTheme(key)}
+                      style={({ pressed }) => [
+                        styles.themeOption,
+                        themeName === key && {
+                          borderColor: colors.primary,
+                          backgroundColor: colors.primaryMuted,
+                        },
+                        { opacity: pressed ? 0.75 : 1 },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.swatch,
+                          {
+                            backgroundColor: themes[key].colors.background,
+                            borderColor: themes[key].colors.border,
+                          },
+                        ]}
+                      >
+                        <View
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: 9,
+                            backgroundColor: themes[key].colors.primary,
+                          }}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={ui.title}>{themes[key].label}</Text>
+                        <Text style={ui.label}>{themes[key].description}</Text>
+                      </View>
+                      {themeName === key ? <Icon name="check" color={colors.primary} /> : null}
+                    </Pressable>
+                  ))}
+                </View>
+                {saveError ? (
+                  <Text accessibilityLiveRegion="polite" style={ui.label}>
+                    {saveError}
+                  </Text>
+                ) : null}
+              </Card>
               <Connections settings={settings} busy={busy} onSave={updateConnection} />
               <Card>
                 <View style={ui.between}>
@@ -667,7 +847,16 @@ function AppContent() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      <View style={styles.navigation}>
+      {busy ? (
+        <View accessibilityLiveRegion="polite" style={styles.busyBar}>
+          <ActivityIndicator size="small" color={colors.primary} />
+          <Text style={[ui.label, { flex: 1 }]}>
+            {refreshing ? 'Refreshing service health…' : 'Working on your request…'}
+          </Text>
+        </View>
+      ) : null}
+
+      <View accessibilityRole="tablist" style={styles.navigation}>
         {navigation.map((item) => (
           <Pressable
             key={item.label}
@@ -677,17 +866,22 @@ function AppContent() {
             onPress={() => setTab(item.label)}
             style={({ pressed }) => [styles.navItem, { opacity: pressed ? 0.6 : 1 }]}
           >
-            <View style={[styles.navIcon, tab === item.label && { backgroundColor: colors.muted }]}>
+            <View
+              style={[
+                styles.navIcon,
+                tab === item.label && { backgroundColor: colors.primaryMuted },
+              ]}
+            >
               <Icon
                 name={item.icon}
                 size={20}
-                color={tab === item.label ? colors.text : colors.textMuted}
+                color={tab === item.label ? colors.primary : colors.textMuted}
               />
             </View>
             <Text
               style={[
                 styles.navLabel,
-                tab === item.label && { color: colors.text, fontWeight: '600' },
+                tab === item.label && { color: colors.primary, fontWeight: '700' },
               ]}
             >
               {item.label}
@@ -702,163 +896,249 @@ function AppContent() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AppContent />
+      <ThemeProvider>
+        <AppContent />
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.surface },
-  topBar: {
-    paddingHorizontal: 20,
-    minHeight: 62,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderColor: colors.border,
-  },
-  logo: {
-    width: 29,
-    height: 29,
-    borderRadius: 7,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brand: { color: colors.text, fontSize: 17, fontWeight: '600', letterSpacing: -0.5 },
-  content: {
-    flexGrow: 1,
-    backgroundColor: colors.background,
-    padding: 20,
-    paddingBottom: 24,
-    gap: 16,
-  },
-  pageHeader: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 4 },
-  pageTitle: {
-    color: colors.text,
-    fontSize: 26,
-    lineHeight: 34,
-    letterSpacing: -0.8,
-    fontWeight: '600',
-  },
-  iconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  stats: { flexDirection: 'row', paddingBottom: 4, gap: 20 },
-  stat: { flex: 1, gap: 6 },
-  statRule: { width: 1, backgroundColor: colors.border, marginVertical: 3 },
-  statValue: {
-    fontSize: 27,
-    lineHeight: 34,
-    fontWeight: '600',
-    letterSpacing: -0.7,
-    color: colors.text,
-  },
-  iconTile: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: colors.muted,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checks: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
-  check: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  dot: { width: 5, height: 5, borderRadius: 3 },
-  small: { color: colors.textMuted, fontSize: 10, lineHeight: 16 },
-  incident: {
-    gap: 10,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: colors.dangerMuted,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-  },
-  incidentTitle: {
-    color: colors.text,
-    fontWeight: '600',
-    fontSize: 16,
-    lineHeight: 23,
-    letterSpacing: -0.3,
-  },
-  finding: {
-    color: colors.text,
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '600',
-    letterSpacing: -0.3,
-  },
-  linkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: 60,
-    paddingVertical: 8,
-    gap: 12,
-  },
-  demoPanel: { gap: 10, backgroundColor: colors.muted, padding: 16, borderRadius: 10 },
-  notice: {
-    backgroundColor: colors.warningMuted,
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FEF08A',
-  },
-  statusLine: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingTop: 2 },
-  navigation: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 5,
-    backgroundColor: colors.surface,
-    borderTopWidth: 1,
-    borderColor: colors.border,
-  },
-  navItem: { flex: 1, alignItems: 'center', gap: 3, minHeight: 55 },
-  navIcon: {
-    width: 48,
-    height: 30,
-    borderRadius: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  navLabel: { fontSize: 10, lineHeight: 16, color: colors.textMuted },
-  segmented: { backgroundColor: colors.muted, borderRadius: 8, padding: 3, flexDirection: 'row' },
-  segment: {
-    flex: 1,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  segmentSelected: { backgroundColor: colors.surface, borderColor: colors.border },
-  segmentText: { fontSize: 12, lineHeight: 18, fontWeight: '500', color: colors.textMuted },
-  evidenceList: { borderTopWidth: 1, borderColor: colors.border },
-  evidenceRow: {
-    flexDirection: 'row',
-    gap: 14,
-    paddingVertical: 18,
-    borderBottomWidth: 1,
-    borderColor: colors.border,
-  },
-  eventNumber: {
-    width: 18,
-    fontFamily: 'monospace',
-    color: colors.textMuted,
-    fontSize: 10,
-    lineHeight: 18,
-    paddingTop: 1,
-  },
-  codeBlock: { backgroundColor: colors.muted, borderRadius: 6, padding: 12, gap: 6 },
-  empty: { paddingHorizontal: 24, paddingVertical: 40, alignItems: 'center', gap: 12 },
-});
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
+    brandCaption: { fontSize: 10, lineHeight: 16, color: colors.textMuted },
+    hero: { backgroundColor: colors.hero, borderRadius: 26, padding: 22, gap: 14 },
+    heroIcon: {
+      width: 50,
+      height: 50,
+      borderRadius: 18,
+      backgroundColor: colors.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heroTitle: {
+      fontSize: 27,
+      lineHeight: 34,
+      fontWeight: '600',
+      letterSpacing: -0.7,
+      color: colors.text,
+    },
+    busyBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+      backgroundColor: colors.primaryMuted,
+    },
+    searchBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 12,
+    },
+    searchInput: { flex: 1, minHeight: 52, fontSize: 14, color: colors.text, paddingVertical: 12 },
+    filter: {
+      alignSelf: 'flex-start',
+      minHeight: 44,
+      paddingHorizontal: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    themeOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+    },
+    swatch: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    safeArea: { flex: 1, backgroundColor: colors.surface },
+    topBar: {
+      paddingHorizontal: 20,
+      minHeight: 76,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderColor: colors.border,
+    },
+    logo: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    brand: { color: colors.text, fontSize: 17, fontWeight: '600', letterSpacing: -0.5 },
+    content: {
+      flexGrow: 1,
+      backgroundColor: colors.background,
+      padding: 20,
+      paddingBottom: 32,
+      width: '100%',
+      maxWidth: 760,
+      alignSelf: 'center',
+      gap: 16,
+    },
+    pageHeader: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 4 },
+    pageTitle: {
+      color: colors.text,
+      fontSize: 28,
+      lineHeight: 34,
+      letterSpacing: -0.8,
+      fontWeight: '600',
+    },
+    iconButton: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    stats: { flexDirection: 'row', gap: 12 },
+    stat: {
+      flex: 1,
+      gap: 6,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 18,
+      padding: 14,
+    },
+    statValue: {
+      fontSize: 27,
+      lineHeight: 34,
+      fontWeight: '600',
+      letterSpacing: -0.7,
+      color: colors.text,
+    },
+    iconTile: {
+      width: 42,
+      height: 42,
+      borderRadius: 8,
+      backgroundColor: colors.muted,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    checks: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
+    check: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    dot: { width: 5, height: 5, borderRadius: 3 },
+    small: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
+    incident: {
+      gap: 10,
+      padding: 16,
+      borderRadius: 20,
+      backgroundColor: colors.dangerMuted,
+      borderWidth: 1,
+      borderColor: colors.dangerMuted,
+    },
+    incidentTitle: {
+      color: colors.text,
+      fontWeight: '600',
+      fontSize: 16,
+      lineHeight: 23,
+      letterSpacing: -0.3,
+    },
+    finding: {
+      color: colors.text,
+      fontSize: 16,
+      lineHeight: 24,
+      fontWeight: '600',
+      letterSpacing: -0.3,
+    },
+    linkRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      minHeight: 60,
+      padding: 18,
+      borderRadius: 20,
+      backgroundColor: colors.surface,
+      gap: 12,
+    },
+    demoPanel: { gap: 10, backgroundColor: colors.muted, padding: 20, borderRadius: 20 },
+    notice: {
+      backgroundColor: colors.warningMuted,
+      padding: 12,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: colors.warningMuted,
+    },
+    statusLine: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center',
+      padding: 14,
+      backgroundColor: colors.muted,
+      borderRadius: 14,
+    },
+    navigation: {
+      flexDirection: 'row',
+      paddingHorizontal: 16,
+      paddingTop: 8,
+      paddingBottom: 5,
+      backgroundColor: colors.surface,
+      borderTopWidth: 1,
+      borderColor: colors.border,
+    },
+    navItem: { flex: 1, alignItems: 'center', gap: 3, minHeight: 55 },
+    navIcon: {
+      width: 58,
+      height: 34,
+      borderRadius: 14,
+      overflow: 'hidden',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    navLabel: { fontSize: 12, lineHeight: 18, color: colors.textMuted },
+    segmented: { backgroundColor: colors.muted, borderRadius: 8, padding: 3, flexDirection: 'row' },
+    segment: {
+      flex: 1,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: 'transparent',
+    },
+    segmentSelected: { backgroundColor: colors.surface, borderColor: colors.border },
+    segmentText: { fontSize: 12, lineHeight: 18, fontWeight: '500', color: colors.textMuted },
+    evidenceList: { backgroundColor: colors.surface, borderRadius: 20, paddingHorizontal: 16 },
+    evidenceRow: {
+      flexDirection: 'row',
+      gap: 14,
+      paddingVertical: 18,
+      borderBottomWidth: 1,
+      borderColor: colors.border,
+    },
+    eventNumber: {
+      width: 18,
+      fontFamily: 'monospace',
+      color: colors.textMuted,
+      fontSize: 10,
+      lineHeight: 18,
+      paddingTop: 1,
+    },
+    codeBlock: { backgroundColor: colors.muted, borderRadius: 6, padding: 12, gap: 6 },
+    empty: { paddingHorizontal: 24, paddingVertical: 40, alignItems: 'center', gap: 12 },
+  });

@@ -1,4 +1,4 @@
-import type { PropsWithChildren } from 'react';
+import { useMemo, type PropsWithChildren } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -8,7 +8,7 @@ import {
   type ViewStyle,
   type StyleProp,
 } from 'react-native';
-import { colors } from '../theme';
+import { useTheme, type Palette } from '../theme';
 
 export type IconName =
   | 'terminal'
@@ -93,12 +93,14 @@ const paths: Record<IconName, Segment[]> = {
 export function Icon({
   name,
   size = 20,
-  color = colors.text,
+  color: customColor,
 }: {
   name: IconName;
   size?: number;
   color?: string;
 }) {
+  const { colors } = useTheme();
+  const color = customColor ?? colors.text;
   const d = (n: number) => (n * size) / 24;
   const box = (x: number, y: number, w: number, h: number, radius: number, key: string) => (
     <View
@@ -185,6 +187,8 @@ export function Button({
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
+  const { colors } = useTheme();
+  const ui = useUi();
   const foreground = variant === 'primary' ? colors.primaryForeground : colors.text;
   return (
     <Pressable
@@ -197,7 +201,10 @@ export function Button({
         ui.button,
         variant === 'primary' ? ui.primary : variant === 'outline' ? ui.outline : ui.ghost,
         style,
-        { opacity: disabled || loading ? 0.45 : pressed ? 0.7 : 1 },
+        {
+          opacity: disabled ? 0.45 : loading ? 0.8 : pressed ? 0.75 : 1,
+          transform: [{ scale: pressed ? 0.98 : 1 }],
+        },
       ]}
     >
       {loading ? (
@@ -215,6 +222,8 @@ export function Badge({
   tone = 'neutral',
   dot = false,
 }: PropsWithChildren<{ tone?: 'neutral' | 'success' | 'warning' | 'danger'; dot?: boolean }>) {
+  const { colors } = useTheme();
+  const ui = useUi();
   const foreground = tone === 'neutral' ? colors.textMuted : colors[tone];
   const background = tone === 'neutral' ? colors.muted : colors[`${tone}Muted`];
   return (
@@ -228,61 +237,73 @@ export function Badge({
 }
 
 export function Card({ children, style }: PropsWithChildren<{ style?: StyleProp<ViewStyle> }>) {
+  const ui = useUi();
   return <View style={[ui.card, style]}>{children}</View>;
 }
 
-export const ui = StyleSheet.create({
-  card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    gap: 14,
-  },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  between: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  title: {
-    fontSize: 15,
-    lineHeight: 21,
-    fontWeight: '600',
-    color: colors.text,
-    letterSpacing: -0.2,
-  },
-  body: { fontSize: 13, lineHeight: 20, color: colors.textMuted },
-  label: { fontSize: 12, lineHeight: 18, color: colors.textMuted },
-  mono: { fontFamily: 'monospace', fontSize: 11, lineHeight: 17, color: colors.textMuted },
-  divider: { height: 1, backgroundColor: colors.border },
-  button: {
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    borderWidth: 1,
-  },
-  primary: { backgroundColor: colors.primary, borderColor: colors.primary },
-  outline: { backgroundColor: colors.surface, borderColor: colors.border },
-  ghost: { borderColor: 'transparent', backgroundColor: 'transparent' },
-  buttonText: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontWeight: '600',
-    flexShrink: 1,
-    textAlign: 'center',
-  },
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 5,
-    borderRadius: 5,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    flexShrink: 0,
-  },
-  badgeText: { fontSize: 10, lineHeight: 14, fontWeight: '500' },
-});
+export function useUi() {
+  const { colors } = useTheme();
+  return useMemo(() => createUi(colors), [colors]);
+}
+const createUi = (colors: Palette) =>
+  StyleSheet.create({
+    card: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: 1,
+      borderRadius: 22,
+      padding: 20,
+      gap: 14,
+    },
+    row: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 },
+    between: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: 10,
+    },
+    title: {
+      fontSize: 16,
+      lineHeight: 23,
+      fontWeight: '600',
+      color: colors.text,
+      letterSpacing: -0.2,
+    },
+    body: { fontSize: 14, lineHeight: 22, color: colors.textMuted },
+    label: { fontSize: 12, lineHeight: 18, color: colors.textMuted },
+    mono: { fontFamily: 'monospace', fontSize: 11, lineHeight: 17, color: colors.textMuted },
+    divider: { height: 1, backgroundColor: colors.border },
+    button: {
+      minHeight: 48,
+      paddingHorizontal: 14,
+      paddingVertical: 11,
+      borderRadius: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      borderWidth: 1,
+    },
+    primary: { backgroundColor: colors.primary, borderColor: colors.primary },
+    outline: { backgroundColor: colors.surface, borderColor: colors.border },
+    ghost: { borderColor: 'transparent', backgroundColor: 'transparent' },
+    buttonText: {
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '600',
+      flexShrink: 1,
+      textAlign: 'center',
+    },
+    badge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      gap: 5,
+      borderRadius: 20,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      flexShrink: 1,
+    },
+    badgeText: { fontSize: 11, lineHeight: 16, fontWeight: '500' },
+  });
