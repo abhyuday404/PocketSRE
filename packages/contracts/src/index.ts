@@ -218,6 +218,23 @@ export const FixProposalSchema = z
   .strict();
 export type FixProposal = z.infer<typeof FixProposalSchema>;
 export const fixProposalJsonSchema = z.toJSONSchema(FixProposalSchema);
+export const AgentTaskSchema = z
+  .object({
+    request: z.string().trim().min(1).max(2000),
+    history: z
+      .array(
+        z
+          .object({
+            role: z.enum(['user', 'assistant']),
+            content: z.string().min(1).max(2000),
+          })
+          .strict(),
+      )
+      .max(4)
+      .default([]),
+  })
+  .strict();
+export type AgentTask = z.infer<typeof AgentTaskSchema>;
 export const FixContextSchema = z.object({
   id: z.string().uuid(),
   repository: z.string(),
@@ -226,6 +243,7 @@ export const FixContextSchema = z.object({
   baseTree: sha,
   expiresAt: z.string().datetime(),
   bundle: IncidentBundleSchema,
+  task: AgentTaskSchema.optional(),
   files: z
     .array(
       z.object({
