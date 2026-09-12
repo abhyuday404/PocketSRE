@@ -3,13 +3,14 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   FixContextSchema,
+  AgentTaskSchema,
   FixProposalSchema,
   type FixContext,
   type FixDraft,
   type IncidentBundle,
   type AuditEntry,
 } from '@pocketsre/contracts';
-import { validateFix } from '@pocketsre/incident-engine';
+import { containsCredential, validateFix } from '@pocketsre/incident-engine';
 import type { AuditStore } from './audit.js';
 import type { FixRepository } from './github-fixes.js';
 
@@ -40,6 +41,9 @@ export function registerFixRoutes(
   async function current(context: FixContext) {
     if (Date.parse(context.expiresAt) < Date.now())
       throw fail('This source snapshot expired. Generate a new fix.');
+    // Feature requests depend on this immutable source/request snapshot, not outage state.
+    // The repository head is still checked immediately before every publication.
+    if (context.task) return new Set(context.bundle.evidence.map((event) => event.id));
     const bundle = await options.loadBundle();
     if (
       bundle.incident.id !== context.bundle.incident.id ||
@@ -58,21 +62,60 @@ export function registerFixRoutes(
   app.post('/v1/fixes/context', async (request) => {
     const repo = repository();
     const input = z
-      .object({ incidentId: z.string(), paths: z.array(z.string()).min(1).max(3) })
+      .object({
+        incidentId: z.string(),
+        paths: z.array(z.string()).min(1).max(3),
+        task: AgentTaskSchema.optional(),
+      })
       .strict()
       .parse(request.body);
     expire();
     if (contexts.size >= 20)
       throw fail('Too many source snapshots. Wait for older snapshots to expire.');
     const bundle = await options.loadBundle();
-    if (input.incidentId !== bundle.incident.id)
+    if (!input.task && input.incidentId !== bundle.incident.id)
       throw fail('Refresh the incident before reading source.');
+    if (input.task && containsCredential(JSON.stringify(input.task)))
+      throw fail('Remove credentials from the request and conversation.', 400);
     const source = await repo.readSource(input.paths);
+    const id = randomUUID();
+    const timestamp = new Date().toISOString();
+    const taskBundle: IncidentBundle = input.task
+      ? {
+          ...bundle,
+          evidence: [
+            {
+              id: `agent:${id}:request`,
+              source: 'investigator',
+              type: 'investigation_result',
+              timestamp,
+              title: 'User requested repository task',
+              excerpt: input.task.request,
+              metadata: { contextId: id },
+            },
+            ...source.files.map((file, index) => ({
+              id: `agent:${id}:source:${index}`,
+              source: 'github' as const,
+              type: 'investigation_result' as const,
+              timestamp,
+              title: `Source snapshot: ${file.path}`,
+              excerpt: `Read ${file.path} at commit ${source.baseCommit}; blob ${file.sha}.`,
+              metadata: {
+                contextId: id,
+                path: file.path,
+                commit: source.baseCommit,
+                blob: file.sha,
+              },
+            })),
+          ],
+        }
+      : bundle;
     const context = FixContextSchema.parse({
       ...source,
-      id: randomUUID(),
+      id,
       repository: repo.repository,
-      bundle,
+      bundle: taskBundle,
+      task: input.task,
       expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     });
     contexts.set(context.id, context);

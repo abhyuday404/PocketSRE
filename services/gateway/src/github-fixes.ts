@@ -164,13 +164,20 @@ export class GitHubFixRepository implements FixRepository {
     await this.request('/git/refs', { ref: `refs/heads/${branch}`, sha: commit.sha });
     const pull = z.object({ number: z.number().int().positive() }).parse(
       await this.request('/pulls', {
-        title: `Fix: ${draft.proposal.summary.split('\n')[0]!.slice(0, 100)}`,
+        title: `${context.task ? 'Change' : 'Fix'}: ${draft.proposal.summary.split('\n')[0]!.slice(0, 100)}`,
         head: branch,
         base: context.baseBranch,
         draft: true,
         body: [
           draft.proposal.summary,
-          `Incident: ${context.bundle.incident.id}`,
+          ...(context.task
+            ? [
+                `User request: ${context.task.request}`,
+                ...context.bundle.evidence.map(
+                  (event) => `${event.id}: ${event.title}\n${event.excerpt}`,
+                ),
+              ]
+            : [`Incident: ${context.bundle.incident.id}`]),
           `Evidence: ${draft.proposal.evidenceIds.join(', ')}`,
           ...draft.proposal.edits.map(
             (edit) => `${edit.path}: ${edit.reason}\nEvidence: ${edit.evidenceIds.join(', ')}`,

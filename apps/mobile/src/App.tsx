@@ -19,18 +19,20 @@ import { chronologicalEvidence } from '@pocketsre/incident-engine';
 import { useIncident } from './hooks/useIncident';
 import { Connections } from './components/Connections';
 import { FixHarness } from './components/FixHarness';
+import { TempChat } from './components/TempChat';
 import { LocalModel } from './components/LocalModel';
 import { loadModelPath } from './settings/model';
 import { Aurora, Badge, Button, Card, Icon, ui, type IconName } from './components/ui';
 import { colors } from './theme';
 import { HISTORY_LIMITS, type SnapshotSource } from './storage/incidents';
 
-type Tab = 'Overview' | 'Activity' | 'Fixes' | 'Settings';
+type Tab = 'Overview' | 'Activity' | 'Fixes' | 'Agent' | 'Settings';
 type ActivityTab = 'Evidence' | 'Actions' | 'Saved';
 const navigation: { label: Tab; icon: IconName }[] = [
   { label: 'Overview', icon: 'server' },
   { label: 'Activity', icon: 'activity' },
   { label: 'Fixes', icon: 'terminal' },
+  { label: 'Agent', icon: 'terminal' },
   { label: 'Settings', icon: 'settings' },
 ];
 const sourceLabels: Record<string, string> = {
@@ -174,6 +176,7 @@ function AppContent() {
   } = state;
   const [tab, setTab] = useState<Tab>('Overview');
   const [activityTab, setActivityTab] = useState<ActivityTab>('Evidence');
+  const [agentMode, setAgentMode] = useState<'repository' | 'chat'>('repository');
   const evidence = chronologicalEvidence(bundle);
   const cited = new Set([
     ...(diagnosis?.evidenceIds ?? []),
@@ -235,7 +238,9 @@ function AppContent() {
                       ? 'INCIDENT LOG / 02'
                       : tab === 'Fixes'
                         ? 'CODE FIXES / 03'
-                        : 'WORKSPACE / 04'}
+                        : tab === 'Agent'
+                          ? 'LOCAL AGENT / 04'
+                          : 'WORKSPACE / 05'}
                 </Text>
                 <Badge dot tone={live ? 'neutral' : 'warning'}>
                   {originLabel}
@@ -251,7 +256,9 @@ function AppContent() {
                     ? 'Evidence, actions and saved incidents.'
                     : tab === 'Fixes'
                       ? 'Review a local AI patch before opening a PR.'
-                      : 'Connections and device storage.'}
+                      : tab === 'Agent'
+                        ? 'Ask your model. Shape your repository.'
+                        : 'Connections and device storage.'}
               </Text>
             </View>
             {tab === 'Overview' ? (
@@ -754,6 +761,41 @@ function AppContent() {
               generate={state.proposeFix}
             />
           ) : null}
+          <View style={{ display: tab === 'Agent' ? 'flex' : 'none', gap: 16 }}>
+            <View style={ui.row}>
+              <Button
+                label="Repository agent"
+                variant={agentMode === 'repository' ? 'primary' : 'outline'}
+                onPress={() => setAgentMode('repository')}
+              />
+              <Button
+                label="Temp chat"
+                variant={agentMode === 'chat' ? 'primary' : 'outline'}
+                onPress={() => setAgentMode('chat')}
+              />
+            </View>
+            <View style={{ display: agentMode === 'repository' ? 'flex' : 'none', gap: 16 }}>
+              <FixHarness
+                key={`agent:${settings.url}:${settings.token}:${modelPath ?? ''}`}
+                mode="agent"
+                incidentId={bundle.incident.id}
+                connected={live && mode === 'live'}
+                busy={busy}
+                modelAvailable={!!(modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH)}
+                generate={state.proposeFix}
+                onOpenSettings={() => setTab('Settings')}
+              />
+            </View>
+            <View style={{ display: agentMode === 'chat' ? 'flex' : 'none', gap: 16 }}>
+              <TempChat
+                key={`chat:${modelPath ?? ''}`}
+                chat={state.chat}
+                busy={busy}
+                modelAvailable={!!(modelPath ?? process.env.EXPO_PUBLIC_MODEL_PATH)}
+                onOpenSettings={() => setTab('Settings')}
+              />
+            </View>
+          </View>
           {tab === 'Settings' ? (
             <>
               <Connections settings={settings} busy={busy} onSave={updateConnection} />

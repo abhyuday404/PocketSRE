@@ -15,6 +15,7 @@ const native = vi.hoisted(() => ({
   loadConnection: vi.fn(),
   pickJsonFile: vi.fn(),
   analyze: vi.fn(),
+  chat: vi.fn(),
 }));
 vi.mock('react-native', () => ({ Alert: { alert: native.alert } }));
 vi.mock('../api/gateway', () => ({
@@ -35,7 +36,11 @@ vi.mock('../officekit/bundle', () => ({
   shareIncidentFile: vi.fn(),
 }));
 vi.mock('../ai/LocalTriageEngine', () => ({
-  createTriageEngine: () => ({ modeLabel: 'Deterministic test engine', analyze: native.analyze }),
+  createTriageEngine: () => ({
+    modeLabel: 'Deterministic test engine',
+    analyze: native.analyze,
+    chat: native.chat,
+  }),
 }));
 import { useIncident } from './useIncident';
 
@@ -85,6 +90,24 @@ beforeEach(() => {
   native.pickJsonFile.mockResolvedValue(null);
 });
 afterEach(unmount);
+
+it('runs temporary chat offline without gateway requests and releases the shared lock on failure', async () => {
+  await mount();
+  const gatewayCalls = native.fetchCurrentIncident.mock.calls.length;
+  native.chat.mockRejectedValueOnce(new Error('Model failed'));
+  const messages = [{ role: 'user' as const, content: 'Hello' }];
+  const args = [messages, vi.fn(), new AbortController().signal] as const;
+  await act(async () => {
+    await expect(state.chat(...args)).rejects.toThrow('Model failed');
+  });
+  expect(state.busy).toBe(false);
+  native.chat.mockResolvedValueOnce({ text: 'Hello back', limited: false });
+  await act(async () => {
+    expect(await state.chat(...args)).toEqual({ text: 'Hello back', limited: false });
+  });
+  expect(native.fetchCurrentIncident).toHaveBeenCalledTimes(gatewayCalls);
+  expect(state.busy).toBe(false);
+});
 
 it('restores a saved diagnosis after an offline app restart without enabling actions', async () => {
   const bundle = createSampleIncident();

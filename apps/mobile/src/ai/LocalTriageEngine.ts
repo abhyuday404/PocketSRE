@@ -13,12 +13,22 @@ import {
   sanitizeBundle,
   buildFixPrompt,
   validateFix,
+  validateFixResponse,
 } from '@pocketsre/incident-engine';
+
+export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+export type ChatResult = { text: string; limited: boolean };
+export type ChatCompletion = (
+  messages: ChatMessage[],
+  onToken: (token: string) => void,
+  signal: AbortSignal,
+) => Promise<ChatResult>;
 
 export interface LocalTriageEngine {
   readonly modeLabel: string;
   analyze(bundle: IncidentBundle): Promise<Diagnosis>;
   proposeFix?(context: FixContext): Promise<FixProposal>;
+  chat?: ChatCompletion;
   release?(): Promise<void>;
 }
 
@@ -109,9 +119,58 @@ export class LlamaRnTriageEngine implements LocalTriageEngine {
   }
 
   async release(): Promise<void> {
+    await this.context?.stopCompletion?.();
     await this.context?.release();
     this.context = null;
   }
+
+  /** Temporary model playground: no incident prompt, schema, citations, or tools. */
+  chat: ChatCompletion = async (messages, onToken, signal) => {
+    const checkStopped = () => {
+      if (signal.aborted) throw new Error('Chat stopped.');
+    };
+    checkStopped();
+    const context = await this.getContext();
+    checkStopped();
+    const formatted = await context.getFormattedChat(messages, undefined, {
+      enable_thinking: false,
+    });
+    const prompt = formatted.prompt ?? '';
+    const { tokens } = await context.tokenize(prompt);
+    if (tokens.length > 6016)
+      throw new Error(
+        'This conversation fills the model context. Clear chat or shorten your message.',
+      );
+    checkStopped();
+    await context.clearCache();
+    checkStopped();
+    const stop = () => {
+      void context.stopCompletion().catch(() => {});
+    };
+    signal.addEventListener('abort', stop, { once: true });
+    try {
+      // Use the formatted prompt directly so cancellation cannot race a second async template pass.
+      const response = await context.completion(
+        {
+          prompt,
+          n_predict: 2048,
+          temperature: 0.7,
+          stop: [
+            '</s>',
+            '<|eot_id|>',
+            '<|im_end|>',
+            ...('additional_stops' in formatted ? (formatted.additional_stops ?? []) : []),
+          ],
+        },
+        ({ token }) => {
+          if (!signal.aborted) onToken(token);
+        },
+      );
+      return { text: response.text, limited: !!(response.stopped_limit || response.context_full) };
+    } finally {
+      signal.removeEventListener('abort', stop);
+    }
+  };
 
   async proposeFix(source: FixContext): Promise<FixProposal> {
     const context = await this.getContext();
@@ -137,7 +196,9 @@ export class LlamaRnTriageEngine implements LocalTriageEngine {
     const start = response.text.indexOf('{');
     const end = response.text.lastIndexOf('}');
     if (start < 0 || end <= start) throw new Error('The local model returned no fix.');
-    return validateFix(source, JSON.parse(response.text.slice(start, end + 1))).proposal;
+    const proposal = validateFixResponse(source, JSON.parse(response.text.slice(start, end + 1)));
+    if (source.task && !proposal.edits.length) return proposal;
+    return validateFix(source, proposal).proposal;
   }
 }
 
@@ -169,6 +230,11 @@ export class ResilientTriageEngine implements LocalTriageEngine {
   async release() {
     await this.primary.release?.();
   }
+  chat: ChatCompletion = async (messages, onToken, signal) => {
+    if (!this.primary.chat)
+      throw new Error('Import a GGUF model in Settings to use temporary chat.');
+    return this.primary.chat(messages, onToken, signal);
+  };
   async proposeFix(context: FixContext): Promise<FixProposal> {
     if (!this.primary.proposeFix)
       throw new Error('Select a local model in Settings to draft a code fix.');

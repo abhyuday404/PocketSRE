@@ -28,6 +28,18 @@ For local development, `GITHUB_USE_CLI=1` uses an already authenticated GitHub C
 
 ## Review and publish
 
+### Agent tab: repository requests
+
+Open **Agent** to ask the local model to explain selected code, add a small feature, refactor a function, or fix a bug. Import a model in Settings, connect to a live gateway with GitHub fixes configured, select up to three existing files from `GITHUB_FIX_PATHS`, and enter a request. For example: “Add quantity validation to this checkout endpoint and return a clear error for invalid input.”
+
+The agent reads fresh source from the repository default branch for each request. It can answer without editing, ask for more information, or propose exact replacements. Follow-ups include the latest two exchanges; earlier suggestions are explicitly treated as untested and not applied. Conversation stays in memory across tab switches and clears on app restart or a gateway/model change. Use **New conversation** to clear it manually. A prepared patch must be cleared before another request; publication in progress must be resolved first.
+
+For feature requests, the gateway creates evidence IDs for the user request and each immutable source snapshot. These IDs live in the task's incident bundle and are validated on the phone and gateway. Feature patches do not require an active outage and are independent of later health observations, but expiration, exact replacements, allowed files, current Git branch head, and explicit publication approval still apply. The draft PR includes the request and source evidence for reviewers.
+
+This is a bounded repository assistant: it edits existing allowed files only (three files, 12 KB total source, three replacements). It does not execute commands, create new files, install dependencies, run tests, merge, or deploy. Requests or conversation that exceed the local context budget are rejected before inference; start a new conversation or select fewer/smaller files. Inference stays on the phone; the request, recent conversation, source, and proposed patch pass through your configured gateway. The gateway keeps pending contexts in memory for up to 15 minutes. The request and patch are shared with GitHub only when you approve publication.
+
+### Incident fixes
+
 1. Refresh a live incident and open **Fixes**.
 2. Select the relevant source files and tap **Draft fix on this phone**.
 3. Read each reason, evidence reference, and exact remove/insert block. The patch is an untested hypothesis; valid citations do not establish causality or correctness.

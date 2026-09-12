@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FixContextSchema, type FixProposal } from '@pocketsre/contracts';
-import { buildFixPrompt, validateFix } from './fixes.js';
+import { buildFixPrompt, validateFix, validateFixResponse } from './fixes.js';
 
 const context = FixContextSchema.parse({
   id: 'a888ca81-d043-4e7b-b086-18a47a0ca83c',
@@ -65,6 +65,27 @@ const proposal: FixProposal = {
 };
 
 describe('bounded fix validation', () => {
+  it('grounds feature requests and distinguishes conversation from applied source', () => {
+    const task = {
+      request: 'Make the port configurable.',
+      history: [{ role: 'assistant' as const, content: 'A prior untested suggestion.' }],
+    };
+    const prompt = buildFixPrompt({ ...context, task });
+    expect(prompt).toContain('Make the port configurable.');
+    expect(prompt).toContain('A prior untested suggestion.');
+    expect(prompt).toContain('have NOT been applied');
+    expect(prompt).toContain('feature request is not proof');
+    expect(prompt).not.toContain('"health":');
+    const answer = { ...proposal, edits: [] };
+    expect(validateFixResponse({ ...context, task }, answer)).toEqual(answer);
+    expect(() => validateFixResponse(context, { ...answer, evidenceIds: ['invented'] })).toThrow(
+      /evidence/,
+    );
+    expect(() =>
+      validateFixResponse(context, { ...answer, summary: 'ghp_examplecredentialvalue' }),
+    ).toThrow(/credential/);
+    expect(() => validateFix(context, answer)).toThrow(/more evidence/);
+  });
   it('applies exact edits and preserves unrelated source and executable mode', () => {
     expect(validateFix(context, proposal).changes).toEqual([
       {
