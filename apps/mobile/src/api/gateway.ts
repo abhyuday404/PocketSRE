@@ -8,6 +8,7 @@ import {
   FixContextSchema,
   FixDraftSchema,
   type FixProposal,
+  type AgentTask,
 } from '@pocketsre/contracts';
 import type { ConnectionSettings } from '../settings/connection';
 
@@ -84,11 +85,11 @@ export async function fetchGatewayMode(): Promise<'demo' | 'live'> {
 export async function fetchFixConfig() {
   return FixConfigSchema.parse(await request('/v1/fixes/config'));
 }
-export async function fetchFixContext(incidentId: string, paths: string[]) {
+export async function fetchFixContext(incidentId: string, paths: string[], task?: AgentTask) {
   return FixContextSchema.parse(
     await request('/v1/fixes/context', {
       method: 'POST',
-      body: JSON.stringify({ incidentId, paths }),
+      body: JSON.stringify({ incidentId, paths, task }),
     }),
   );
 }

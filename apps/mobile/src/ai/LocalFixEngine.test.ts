@@ -38,6 +38,21 @@ const proposal: FixProposal = {
 };
 afterEach(() => vi.clearAllMocks());
 describe('local model fix generation', () => {
+  it('answers a repository question without preparing a patch and validates answer citations', async () => {
+    native.tokenize.mockResolvedValue({ tokens: [1, 2] });
+    const taskContext = { ...context, task: { request: 'Explain the port setting.', history: [] } };
+    const answer = { ...proposal, summary: 'The selected source sets port 3001.', edits: [] };
+    native.completion.mockResolvedValueOnce({ text: JSON.stringify(answer) });
+    const engine = new LlamaRnTriageEngine('file:///model.gguf');
+    expect(await engine.proposeFix(taskContext)).toEqual(answer);
+    expect(native.completion.mock.calls[0]![0].messages[0].content).toContain(
+      'Explain the port setting.',
+    );
+    native.completion.mockResolvedValueOnce({
+      text: JSON.stringify({ ...answer, evidenceIds: ['invented'] }),
+    });
+    await expect(engine.proposeFix(taskContext)).rejects.toThrow(/evidence/);
+  });
   it('validates native output against the supplied source and evidence', async () => {
     native.tokenize.mockResolvedValue({ tokens: [1, 2, 3] });
     native.completion.mockResolvedValueOnce({ text: JSON.stringify(proposal) });

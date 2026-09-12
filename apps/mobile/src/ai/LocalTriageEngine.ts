@@ -13,6 +13,7 @@ import {
   sanitizeBundle,
   buildFixPrompt,
   validateFix,
+  validateFixResponse,
 } from '@pocketsre/incident-engine';
 
 export interface LocalTriageEngine {
@@ -137,7 +138,9 @@ export class LlamaRnTriageEngine implements LocalTriageEngine {
     const start = response.text.indexOf('{');
     const end = response.text.lastIndexOf('}');
     if (start < 0 || end <= start) throw new Error('The local model returned no fix.');
-    return validateFix(source, JSON.parse(response.text.slice(start, end + 1))).proposal;
+    const proposal = validateFixResponse(source, JSON.parse(response.text.slice(start, end + 1)));
+    if (source.task && !proposal.edits.length) return proposal;
+    return validateFix(source, proposal).proposal;
   }
 }
 
