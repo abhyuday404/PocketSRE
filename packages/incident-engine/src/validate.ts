@@ -1,13 +1,29 @@
+import { DiagnosisSchema, type Diagnosis, type IncidentBundle } from '@pocketsre/contracts';
+import { ABSTENTION_SUMMARY, assessEvidence } from './assessment.js';
 import {
-  AllowedActionSchema,
-  DiagnosisSchema,
-  type Diagnosis,
-  type IncidentBundle,
-} from '@pocketsre/contracts';
-import { getRollbackTarget } from './recovery.js';
+  failureTypes,
+  isCurrentObservation,
+  isCurrentRelease,
+  isInIncidentWindow,
+  isServiceEvidence,
+  uniqueEvidence,
+} from './evidence.js';
+import { getRollbackEvidence } from './recovery.js';
 
 export type DiagnosisValidationResult =
-  { success: true; diagnosis: Diagnosis } | { success: false; errors: string[] };
+  | {
+      success: true;
+      diagnosis: Diagnosis;
+      validation: {
+        references: 'validated';
+        causality: 'not-verified';
+      };
+    }
+  | { success: false; errors: string[] };
+
+const includesSupport = (cited: string[], required: string[]) =>
+  required.every((id) => cited.includes(id));
+const confidenceRank = { low: 0, medium: 1, high: 2 };
 
 export function validateDiagnosis(
   input: unknown,
@@ -18,7 +34,8 @@ export function validateDiagnosis(
     return { success: false, errors: parsed.error.issues.map((issue) => issue.message) };
   }
 
-  const evidenceIds = new Set(bundle.evidence.map((event) => event.id));
+  const evidence = uniqueEvidence(bundle);
+  const evidenceIds = new Set(evidence.map((event) => event.id));
   const referencedIds = [
     ...parsed.data.evidenceIds,
     ...parsed.data.alternativeCauses.flatMap((item) => item.evidenceIds),
@@ -27,30 +44,93 @@ export function validateDiagnosis(
   const unknownIds = referencedIds.filter((id) => !evidenceIds.has(id));
   const errors: string[] = [];
   const diagnosis = parsed.data;
-  if (diagnosis.likelyCause && diagnosis.evidenceIds.length === 0) {
-    errors.push('A likely cause requires supporting evidence.');
+  if (
+    !diagnosis.summary.trim() ||
+    diagnosis.likelyCause?.trim() === '' ||
+    diagnosis.alternativeCauses.some((cause) => !cause.statement.trim())
+  ) {
+    errors.push('Assertions must contain text; use null for an unassigned cause.');
   }
-  if (diagnosis.alternativeCauses.some((cause) => cause.evidenceIds.length === 0)) {
-    errors.push('Each alternative cause requires evidence.');
-  }
-  const sources = new Set(
-    bundle.evidence
-      .filter((event) => diagnosis.evidenceIds.includes(event.id))
-      .map((event) => event.source),
-  );
-  if (diagnosis.confidence === 'high' && sources.size < 2) {
-    errors.push('High confidence requires at least two independent evidence sources.');
+  const assessment = assessEvidence(bundle);
+  const supported = assessment.diagnosis;
+  // This is structural validation, not semantic proof of model prose. New hypotheses
+  // and paraphrases are allowed, at low confidence without a matched causal rule.
+  const abstention =
+    diagnosis.summary === ABSTENTION_SUMMARY &&
+    diagnosis.likelyCause === null &&
+    diagnosis.confidence === 'low' &&
+    diagnosis.alternativeCauses.length === 0;
+  if (!diagnosis.evidenceIds.length && !abstention)
+    errors.push('A summary requires evidence or an explicit abstention.');
+  const checkHypothesis = (cited: string[], confidence: Diagnosis['confidence']) => {
+    const supporting = evidence.filter((event) => cited.includes(event.id));
+    if (
+      !['observed-failure', 'matched-configuration'].includes(assessment.state) ||
+      !supporting.some(
+        (event) =>
+          failureTypes.has(event.type) &&
+          event.source !== 'investigator' &&
+          isCurrentObservation(event, bundle),
+      ) ||
+      supporting.some(
+        (event) =>
+          !isServiceEvidence(event, bundle) ||
+          !isInIncidentWindow(event, bundle) ||
+          !isCurrentRelease(event, bundle),
+      )
+    ) {
+      errors.push(
+        'A hypothesis requires current failure evidence without known health, release, or timing contradictions.',
+      );
+    }
+    const maximum =
+      supported.likelyCause && includesSupport(cited, supported.evidenceIds) ? 'medium' : 'low';
+    if (confidenceRank[confidence] > confidenceRank[maximum])
+      errors.push('Confidence exceeds the available evidence structure.');
+  };
+  if (diagnosis.likelyCause !== null) checkHypothesis(diagnosis.evidenceIds, diagnosis.confidence);
+  else if (diagnosis.confidence !== 'low')
+    errors.push('An unassigned cause requires low confidence.');
+  for (const cause of diagnosis.alternativeCauses)
+    checkHypothesis(cause.evidenceIds, cause.confidence);
+  if (diagnosis.nextDiagnosticStep !== null && !diagnosis.evidenceIds.length && !abstention) {
+    errors.push('A diagnostic step requires cited context or an explicit abstention.');
   }
   const action = diagnosis.proposedAction;
   if (action) {
-    if (action.type !== 'RUN_HEALTH_CHECK' && action.evidenceIds.length === 0)
-      errors.push('A write action requires evidence.');
+    if (!action.reason.trim() || !action.risk.trim())
+      errors.push('An action requires a reason and risk description.');
+    if (
+      action.evidenceIds.length === 0 ||
+      !evidence.some(
+        (event) =>
+          action.evidenceIds.includes(event.id) &&
+          isServiceEvidence(event, bundle) &&
+          isInIncidentWindow(event, bundle),
+      )
+    ) {
+      errors.push('Every action requires its own incident evidence.');
+    }
     const keys = Object.keys(action.parameters);
     if (action.type === 'TRIGGER_ROLLBACK_WORKFLOW') {
-      const target = getRollbackTarget(bundle);
+      const rollback = getRollbackEvidence(bundle);
+      const citesFailure =
+        rollback &&
+        evidence.some(
+          (event) =>
+            action.evidenceIds.includes(event.id) &&
+            failureTypes.has(event.type) &&
+            event.source !== 'investigator' &&
+            isCurrentObservation(event, bundle) &&
+            event.metadata.release === bundle.serviceHealth.version &&
+            Date.parse(event.timestamp) >= Date.parse(rollback.deployment.timestamp),
+        );
       if (
-        !target ||
-        action.parameters.targetRelease !== target ||
+        !rollback ||
+        assessment.state === 'conflicting' ||
+        action.parameters.targetRelease !== rollback.targetRelease ||
+        !action.evidenceIds.includes(rollback.deployment.id) ||
+        !citesFailure ||
         keys.some((key) => key !== 'targetRelease')
       ) {
         errors.push(
@@ -62,14 +142,9 @@ export function validateDiagnosis(
   }
 
   if (unknownIds.length > 0) {
-    errors.push(`Diagnosis references unknown evidence: ${[...new Set(unknownIds)].join(', ')}`);
-  }
-
-  if (
-    parsed.data.proposedAction &&
-    !AllowedActionSchema.safeParse(parsed.data.proposedAction.type).success
-  ) {
-    errors.push('Diagnosis proposes an unsupported action.');
+    errors.push(
+      `Diagnosis references unknown or ambiguous evidence: ${[...new Set(unknownIds)].join(', ')}`,
+    );
   }
 
   if (
@@ -80,5 +155,12 @@ export function validateDiagnosis(
   }
 
   if (errors.length > 0) return { success: false, errors };
-  return { success: true, diagnosis: parsed.data };
+  return {
+    success: true,
+    diagnosis: parsed.data,
+    validation: {
+      references: 'validated',
+      causality: 'not-verified',
+    },
+  };
 }

@@ -1,4 +1,4 @@
-import type { EvidenceEvent, IncidentBundle } from '@pocketsre/contracts';
+import type { Diagnosis, EvidenceEvent, IncidentBundle } from '@pocketsre/contracts';
 
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/(?:set-cookie|cookie|authorization)\s*:\s*[^\r\n]+/gi, '[REDACTED_HEADER]'],
@@ -50,5 +50,45 @@ export function sanitizeBundle(bundle: IncidentBundle): IncidentBundle {
       serviceName: redactText(bundle.serviceHealth.serviceName),
     },
     evidence: bundle.evidence.map(redactEvidence),
+    ...(bundle.collection
+      ? {
+          collection: bundle.collection.map((entry) => ({
+            ...entry,
+            source: redactText(entry.source),
+            message: redactText(entry.message),
+          })),
+        }
+      : {}),
+  };
+}
+
+/** Persist only after validation against the same sanitized incident bundle. */
+export function sanitizeDiagnosis(diagnosis: Diagnosis): Diagnosis {
+  return {
+    ...diagnosis,
+    summary: redactText(diagnosis.summary),
+    likelyCause: diagnosis.likelyCause === null ? null : redactText(diagnosis.likelyCause),
+    nextDiagnosticStep:
+      diagnosis.nextDiagnosticStep === null ? null : redactText(diagnosis.nextDiagnosticStep),
+    evidenceIds: [...diagnosis.evidenceIds],
+    alternativeCauses: diagnosis.alternativeCauses.map((cause) => ({
+      ...cause,
+      statement: redactText(cause.statement),
+      evidenceIds: [...cause.evidenceIds],
+    })),
+    proposedAction: diagnosis.proposedAction
+      ? {
+          ...diagnosis.proposedAction,
+          reason: redactText(diagnosis.proposedAction.reason),
+          risk: redactText(diagnosis.proposedAction.risk),
+          evidenceIds: [...diagnosis.proposedAction.evidenceIds],
+          parameters: Object.fromEntries(
+            Object.entries(diagnosis.proposedAction.parameters).map(([key, value]) => [
+              key,
+              redactText(value),
+            ]),
+          ),
+        }
+      : null,
   };
 }
