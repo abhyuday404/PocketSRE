@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import { randomUUID } from 'expo-crypto';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { getGatewayUrl, subscribeProjectNotifications } from './api/gateway';
 
@@ -12,7 +13,10 @@ async function deviceId() {
   return id;
 }
 export async function enableProjectNotifications(projectId: string) {
-  const easProjectId = process.env.EXPO_PUBLIC_EAS_PROJECT_ID;
+  const easProjectId =
+    process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
+    Constants.expoConfig?.extra?.eas?.projectId ||
+    Constants.easConfig?.projectId;
   if (!easProjectId)
     throw new Error(
       'Push notifications need an EAS project ID and Android push credentials in a new app build.',

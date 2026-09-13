@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TextInput, StyleSheet } from 'react-native';
-import { hostedBackendUrl, type ConnectionSettings } from '../settings/connection';
+import { View, Text, TextInput, StyleSheet, Switch } from 'react-native';
+import type { ConnectionSettings } from '../settings/connection';
 import { colors } from '../theme';
-import { Badge, Button, Card, Icon, ui } from './ui';
+import { Button, Card, Icon, ui } from './ui';
 
 export function Connections({
   settings,
@@ -13,101 +13,88 @@ export function Connections({
   busy: boolean;
   onSave: (value: ConnectionSettings) => Promise<void>;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const [url, setUrl] = useState(settings.url);
   const [token, setToken] = useState('');
-  const [focused, setFocused] = useState<'url' | 'token' | null>(null);
+  const [reuseKey, setReuseKey] = useState(false);
   useEffect(() => {
     setUrl(settings.url);
+    setReuseKey(false);
   }, [settings.url]);
-  if (hostedBackendUrl && settings.token) return null;
+  if (!expanded)
+    return <Button label="Server connection" variant="ghost" onPress={() => setExpanded(true)} />;
   return (
     <Card>
       <View style={ui.between}>
-        <View style={ui.row}>
-          <Icon name="server" size={18} />
-          <Text style={ui.title}>
-            {hostedBackendUrl ? 'Activate PocketSRE' : 'Development server'}
-          </Text>
-        </View>
-        <Badge>Private</Badge>
+        <Text style={ui.title}>Server connection</Text>
+        <Icon name="server" size={18} />
       </View>
       <Text style={ui.body}>
-        {hostedBackendUrl
-          ? 'Enter your private app access key once on this device. Then connect GitHub to import your projects.'
-          : 'Configure a local server for development.'}
+        Connect wirelessly to your PC. Keep the PC awake and its tunnel running.
       </Text>
-      {!hostedBackendUrl ? (
-        <View style={styles.field}>
-          <Text style={styles.label}>Server URL</Text>
-          <TextInput
-            accessibilityLabel="Gateway URL"
-            value={url}
-            onChangeText={setUrl}
-            onFocus={() => setFocused('url')}
-            onBlur={() => setFocused(null)}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            placeholder="http://127.0.0.1:4100"
-            placeholderTextColor={colors.textMuted}
-            selectionColor={colors.primary}
-            keyboardAppearance="dark"
-            style={[styles.input, focused === 'url' && styles.focused]}
-          />
-          <Text style={ui.label}>Use localhost with USB forwarding, or a secure server URL.</Text>
-        </View>
-      ) : null}
       <View style={styles.field}>
-        <View style={ui.between}>
-          <Text style={styles.label}>App access key</Text>
-          <Text style={ui.label}>
-            {settings.token
-              ? 'Token saved'
-              : hostedBackendUrl
-                ? 'Stored securely on this phone'
-                : 'Optional on localhost'}
-          </Text>
-        </View>
+        <Text style={ui.label}>Server URL</Text>
         <TextInput
-          accessibilityLabel="Gateway access token"
-          value={token}
-          onChangeText={setToken}
-          onFocus={() => setFocused('token')}
-          onBlur={() => setFocused(null)}
+          accessibilityLabel="Server URL"
+          value={url}
+          onChangeText={(value) => {
+            setUrl(value);
+            setReuseKey(false);
+          }}
           autoCapitalize="none"
           autoCorrect={false}
-          secureTextEntry
-          placeholder={settings.token ? 'Leave blank to keep saved token' : 'Enter access token'}
+          keyboardType="url"
+          placeholder="https://your-tunnel.example"
           placeholderTextColor={colors.textMuted}
           selectionColor={colors.primary}
           keyboardAppearance="dark"
-          style={[styles.input, focused === 'token' && styles.focused]}
+          style={styles.input}
         />
-        <Text style={ui.label}>A saved token is kept only when the URL is unchanged.</Text>
       </View>
+      <View style={styles.field}>
+        <Text style={ui.label}>App access key · stored securely on this phone</Text>
+        <TextInput
+          accessibilityLabel="Server access key"
+          value={token}
+          onChangeText={setToken}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+          placeholder={
+            settings.token ? 'Leave blank to keep the key for this address' : 'Enter access key'
+          }
+          placeholderTextColor={colors.textMuted}
+          selectionColor={colors.primary}
+          keyboardAppearance="dark"
+          style={styles.input}
+        />
+      </View>
+      {settings.token && url !== settings.url ? (
+        <View style={ui.between}>
+          <Text style={[ui.body, { flex: 1 }]}>Same PC — use its saved key</Text>
+          <Switch
+            accessibilityLabel="Use saved key for the same PC"
+            value={reuseKey}
+            onValueChange={setReuseKey}
+          />
+        </View>
+      ) : null}
       <Button
-        label={hostedBackendUrl ? 'Activate app' : 'Save connection'}
+        label="Save connection"
         disabled={busy}
         onPress={() => {
-          void onSave({ url, token: token || (url === settings.url ? settings.token : '') }).then(
-            () => setToken(''),
-          );
+          void onSave({
+            url,
+            token: token || (url === settings.url || reuseKey ? settings.token : ''),
+          }).then(() => setToken(''));
         }}
       />
-      {settings.token ? (
-        <Button
-          label="Remove saved token"
-          variant="ghost"
-          disabled={busy}
-          onPress={() => void onSave({ url, token: '' })}
-        />
-      ) : null}
+      <Button label="Hide connection settings" variant="ghost" onPress={() => setExpanded(false)} />
     </Card>
   );
 }
 const styles = StyleSheet.create({
   field: { gap: 7 },
-  label: { color: colors.text, fontSize: 12, lineHeight: 18, fontWeight: '500' },
   input: {
     color: colors.text,
     fontSize: 13,
@@ -119,5 +106,4 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
   },
-  focused: { borderColor: colors.primary },
 });

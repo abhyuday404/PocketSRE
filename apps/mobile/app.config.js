@@ -6,7 +6,8 @@ module.exports = ({ config }) => {
   return {
     ...config,
     name: profile === 'production' ? config.name : `${config.name} ${profile}`,
-    slug: `${config.slug}${suffix.replace('.', '-')}`,
+    // Install variants share the same EAS project and push credentials dashboard.
+    slug: config.slug,
     scheme: `pocketsre${suffix.replace('.', '-')}`,
     android: {
       ...config.android,

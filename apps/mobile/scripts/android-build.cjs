@@ -46,7 +46,10 @@ async function main() {
       'Run this workflow through pnpm android:debug, android:internal, or android:release.',
     );
   for (const workspace of ['@pocketsre/contracts', '@pocketsre/incident-engine']) {
-    run(process.execPath, [pnpm, '--filter', workspace, 'build'], repositoryRoot);
+    const args = ['--filter', workspace, 'build'];
+    // pnpm can be a JS entry point or the standalone native executable.
+    if (/\.(?:c|m)?js$/i.test(pnpm)) run(process.execPath, [pnpm, ...args], repositoryRoot);
+    else run(pnpm, args, repositoryRoot);
   }
   const expo = require.resolve('expo/bin/cli');
   run(process.execPath, [

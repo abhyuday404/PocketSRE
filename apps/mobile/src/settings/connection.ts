@@ -2,21 +2,16 @@ import * as SecureStore from 'expo-secure-store';
 
 export type ConnectionSettings = { url: string; token: string };
 const KEY = 'pocketsre.gateway';
-// Only the public address belongs in the app bundle. Credentials stay in SecureStore.
-export const hostedBackendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+// A saved address always wins, so a restarted tunnel can be changed in Settings.
 export function resolveConnection(stored?: ConnectionSettings): ConnectionSettings {
-  if (hostedBackendUrl) {
-    const url = normalizeGatewayUrl(hostedBackendUrl);
-    if (!url.startsWith('https://')) throw new Error('The hosted service requires HTTPS.');
-    const previousUrl = process.env.EXPO_PUBLIC_MIGRATE_BACKEND_FROM;
-    const reuse =
-      stored &&
-      (stored.url === url || (previousUrl && stored.url === normalizeGatewayUrl(previousUrl)));
-    return { url, token: reuse ? stored.token : '' };
+  const url = normalizeGatewayUrl(process.env.EXPO_PUBLIC_GATEWAY_URL ?? 'http://127.0.0.1:4100');
+  // Explicit opt-in for this PC's USB-to-tunnel migration. Other saved addresses win.
+  const previousUrl = process.env.EXPO_PUBLIC_MIGRATE_BACKEND_FROM;
+  if (stored && previousUrl && stored.url === normalizeGatewayUrl(previousUrl)) {
+    if (!url.startsWith('https://')) throw new Error('Wireless migration requires HTTPS.');
+    return { url, token: stored.token };
   }
-  return (
-    stored ?? { url: process.env.EXPO_PUBLIC_GATEWAY_URL ?? 'http://127.0.0.1:4100', token: '' }
-  );
+  return stored ?? { url, token: '' };
 }
 export function normalizeGatewayUrl(input: string): string {
   const parsed = new URL(input.trim());
@@ -27,7 +22,7 @@ export function normalizeGatewayUrl(input: string): string {
     parsed.search ||
     parsed.hash
   ) {
-    throw new Error('Enter an HTTP(S) gateway URL without credentials or query parameters.');
+    throw new Error('Enter an HTTP(S) server URL without credentials or query parameters.');
   }
   return parsed.toString().replace(/\/$/, '');
 }

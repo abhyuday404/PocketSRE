@@ -1,3 +1,4 @@
+import { LocalDeployments } from './local-deployments.js';
 import { createGatewayApp } from './app.js';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -95,6 +96,12 @@ const app = createGatewayApp({
             push: new ExpoPushTransport(process.env.EXPO_PUSH_ACCESS_TOKEN),
           },
           fixToken: process.env.GITHUB_PROJECT_FIX_TOKEN,
+          fixRepositories: process.env.GITHUB_PROJECT_FIX_REPOSITORIES?.split(',')
+            .map((value) => value.trim())
+            .filter(Boolean),
+          localDeployments: process.env.POCKET_SRE_LAB_DIR
+            ? new LocalDeployments(process.env.POCKET_SRE_LAB_DIR)
+            : undefined,
           allowedHealthOrigins: (process.env.PROJECT_HEALTH_ORIGINS ?? '')
             .split(',')
             .map((value) => value.trim())

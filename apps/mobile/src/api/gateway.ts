@@ -17,6 +17,15 @@ import {
   DeploymentPageSchema,
   DeploymentConnectionSchema,
   MonitorStatusSchema,
+  ProjectFilesSchema,
+  GitPullPageSchema,
+  GitCommitPageSchema,
+  GitBranchPageSchema,
+  GitDiffSchema,
+  GitCodeSchema,
+  GitMergePreviewSchema,
+  type GitMergeRequest,
+  type GitReadyRequest,
 } from '@pocketsre/contracts';
 import type { ConnectionSettings } from '../settings/connection';
 
@@ -238,4 +247,76 @@ export async function subscribeProjectNotifications(
     method: 'PUT',
     body: JSON.stringify({ deviceId, token }),
   })) as { gatewayId: string; enabled: boolean };
+}
+
+export async function fetchProjectFiles(id: string) {
+  return ProjectFilesSchema.parse(await request(`/v1/projects/${id}/files`));
+}
+
+const gitPath = (id: string) => `/v1/projects/${encodeURIComponent(id)}/git`;
+export async function fetchProjectPulls(id: string, page = 1) {
+  return GitPullPageSchema.parse(await request(`${gitPath(id)}/pulls?page=${page}`));
+}
+export async function fetchProjectCommits(id: string, ref: string, page = 1) {
+  return GitCommitPageSchema.parse(
+    await request(`${gitPath(id)}/commits?ref=${encodeURIComponent(ref)}&page=${page}`),
+  );
+}
+export async function fetchProjectBranches(id: string, page = 1) {
+  return GitBranchPageSchema.parse(await request(`${gitPath(id)}/branches?page=${page}`));
+}
+export async function fetchProjectDiff(
+  id: string,
+  kind: 'pulls' | 'commits',
+  revision: string,
+  page = 1,
+  headSha?: string,
+) {
+  return GitDiffSchema.parse(
+    await request(
+      `${gitPath(id)}/${kind}/${encodeURIComponent(revision)}/files?page=${page}${headSha ? `&sha=${encodeURIComponent(headSha)}` : ''}`,
+    ),
+  );
+}
+export async function compareProjectRefs(id: string, base: string, head: string) {
+  return GitDiffSchema.parse(
+    await request(
+      `${gitPath(id)}/compare?base=${encodeURIComponent(base)}&head=${encodeURIComponent(head)}`,
+    ),
+  );
+}
+export async function fetchProjectActions(id: string) {
+  const value = (await request(`/v1/projects/${encodeURIComponent(id)}/activity/actions`)) as {
+    entries: unknown;
+  };
+  return AuditEntrySchema.array().parse(value.entries);
+}
+
+export async function fetchProjectCode(id: string, ref: string, path = '') {
+  return GitCodeSchema.parse(
+    await request(
+      `${gitPath(id)}/code?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`,
+    ),
+  );
+}
+
+export async function fetchMergePreview(id: string, number: number) {
+  return GitMergePreviewSchema.parse(await request(`${gitPath(id)}/pulls/${number}/merge`));
+}
+export async function mergeProjectPull(id: string, number: number, body: GitMergeRequest) {
+  return ActionResultSchema.parse(
+    await request(`/v1/projects/${encodeURIComponent(id)}/actions/pulls/${number}/merge`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function markProjectPullReady(id: string, number: number, body: GitReadyRequest) {
+  return ActionResultSchema.parse(
+    await request(`/v1/projects/${encodeURIComponent(id)}/actions/pulls/${number}/ready`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  );
 }

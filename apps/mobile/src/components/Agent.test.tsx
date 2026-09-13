@@ -8,13 +8,13 @@ const api = vi.hoisted(() => ({
   context: vi.fn(),
   prepare: vi.fn(),
   publish: vi.fn(),
-  alert: vi.fn(),
+  confirm: vi.fn(),
 }));
+vi.mock('./ConfirmationModal', () => ({ useConfirmation: () => api.confirm }));
 vi.mock('react-native', () => ({
   Text: 'Text',
   TextInput: 'TextInput',
   View: 'View',
-  Alert: { alert: api.alert },
   Linking: { openURL: vi.fn() },
 }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => '88d56694-ce10-44cb-b5e9-67a5abed06a1' }));
@@ -102,7 +102,7 @@ async function compose(request = 'Explain the port setting.') {
 }
 async function send() {
   await act(async () => {
-    button('Send to local agent').props.onPress();
+    button('Send to agent').props.onPress();
   });
 }
 beforeEach(() => {
@@ -129,13 +129,13 @@ afterEach(async () => {
 it('requires a model, selected files and a nonblank request', async () => {
   await mount({ modelAvailable: false });
   await compose();
-  expect(button('Send to local agent').props.disabled).toBe(true);
+  expect(button('Send to agent').props.disabled).toBe(true);
   expect(generate).not.toHaveBeenCalled();
   await act(async () => renderer!.unmount());
   await mount();
-  expect(button('Send to local agent').props.disabled).toBe(true);
+  expect(button('Send to agent').props.disabled).toBe(true);
   await compose('   ');
-  expect(button('Send to local agent').props.disabled).toBe(true);
+  expect(button('Send to agent').props.disabled).toBe(true);
 });
 
 it('refreshes access after GitHub fixes are enabled on the gateway', async () => {
@@ -181,7 +181,7 @@ it('shows exact edits, then requires the separate approval before publishing', a
   expect(JSON.stringify(renderer!.toJSON())).toContain(proposal.edits[0]!.after);
   await act(async () => button('Create draft pull request').props.onPress());
   expect(api.publish).not.toHaveBeenCalled();
-  const approve = api.alert.mock.calls[0]![2][1].onPress;
+  const approve = api.confirm.mock.calls[0]![2][1].onPress;
   await act(async () => approve());
   expect(api.publish).toHaveBeenCalledWith(expect.objectContaining({ draftId: draft.id }));
   expect(button('Open pull request')).toBeDefined();
@@ -202,9 +202,9 @@ it('labels and approves isolated demo deployment without claiming a GitHub PR', 
   await send();
   expect(api.publish).not.toHaveBeenCalled();
   await act(async () => button('Deploy demo fix').props.onPress());
-  expect(api.alert.mock.calls[0]![0]).toBe('Deploy this fix to the local demo?');
-  expect(api.alert.mock.calls[0]![2][1].text).toBe('Test and deploy');
-  await act(async () => api.alert.mock.calls[0]![2][1].onPress());
+  expect(api.confirm.mock.calls[0]![0]).toBe('Deploy this fix to the local demo?');
+  expect(api.confirm.mock.calls[0]![2][1].text).toBe('Test and deploy');
+  await act(async () => api.confirm.mock.calls[0]![2][1].onPress());
   expect(JSON.stringify(renderer!.toJSON())).toContain('Tests and live probes passed');
   expect(JSON.stringify(renderer!.toJSON())).not.toContain('Open pull request');
 });
@@ -215,7 +215,7 @@ it('invalidates an open approval dialog when its reviewed draft is cleared', asy
   await compose();
   await send();
   await act(async () => button('Create draft pull request').props.onPress());
-  const approve = api.alert.mock.calls[0]![2][1].onPress;
+  const approve = api.confirm.mock.calls[0]![2][1].onPress;
   await act(async () => button('Continue conversation / clear draft').props.onPress());
   await act(async () => approve());
   expect(api.publish).not.toHaveBeenCalled();
@@ -251,5 +251,41 @@ it('drops a source response after leaving the gateway scope', async () => {
   await act(async () => resolve(context));
   expect(generate).not.toHaveBeenCalled();
   expect(api.prepare).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
+});
+
+it('restores a saved chat, retains its full transcript and only sends the latest context window', async () => {
+  const history = Array.from({ length: 16 }, (_, i) => ({
+    role: 'user' as const,
+    content: `Older message ${i}`,
+  }));
+  const onChange = vi.fn();
+  await act(async () => {
+    renderer = create(
+      <FixHarness
+        mode="agent"
+        incidentId="incident"
+        connected
+        busy={false}
+        generate={generate}
+        chatSession={{
+          initial: {
+            conversation: history,
+            request: 'Continue explaining',
+            paths: ['src/server.ts'],
+          },
+          onChange,
+          onNew: vi.fn(),
+        }}
+      />,
+    );
+  });
+  expect(JSON.stringify(renderer!.toJSON())).toContain('Older message 0');
+  await send();
+  expect(api.context).toHaveBeenLastCalledWith('incident', ['src/server.ts'], {
+    request: 'Continue explaining',
+    history: history.slice(-4),
+  });
+  expect(onChange.mock.calls.at(-1)?.[0].conversation).toHaveLength(18);
   expect(api.publish).not.toHaveBeenCalled();
 });

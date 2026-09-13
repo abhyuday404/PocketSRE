@@ -3,7 +3,10 @@ import { ABSTENTION_SUMMARY, COLLECT_STEP, assessEvidence } from './assessment.j
 import { selectRelevantEvidence } from './correlate.js';
 import { sanitizeBundle } from './redact.js';
 
-export function buildTriagePrompt(rawBundle: IncidentBundle): string {
+export function buildTriagePrompt(
+  rawBundle: IncidentBundle,
+  mode: 'on-device-llm' | 'cloud-llm' = 'on-device-llm',
+): string {
   const bundle = sanitizeBundle(rawBundle);
   const assessment = assessEvidence(bundle);
   const requiredIds = new Set([
@@ -28,7 +31,7 @@ export function buildTriagePrompt(rawBundle: IncidentBundle): string {
   }));
 
   return [
-    'You are PocketSRE, an on-device incident triage assistant.',
+    'You are PocketSRE, an incident triage assistant.',
     'Use only the supplied evidence. Never invent events, files, values, or commands.',
     'If evidence is insufficient, set likelyCause to null and confidence to low.',
     'Every conclusion and action must cite evidenceIds from the supplied evidence.',
@@ -47,9 +50,9 @@ export function buildTriagePrompt(rawBundle: IncidentBundle): string {
     'Return one JSON object matching the Diagnosis schema and no surrounding prose.',
     '',
     `DIAGNOSIS_SCHEMA=${JSON.stringify(diagnosisJsonSchema)}`,
-    `RULE_ASSESSMENT=${JSON.stringify({ ...assessment.diagnosis, mode: 'on-device-llm' })}`,
+    `RULE_ASSESSMENT=${JSON.stringify({ ...assessment.diagnosis, mode })}`,
     `ABSTENTION=${JSON.stringify({
-      mode: 'on-device-llm',
+      mode,
       summary: ABSTENTION_SUMMARY,
       likelyCause: null,
       confidence: 'low',

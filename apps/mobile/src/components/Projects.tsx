@@ -1,7 +1,7 @@
+import { useConfirmation } from './ConfirmationModal';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Pressable,
   ScrollView,
@@ -32,6 +32,7 @@ import {
 } from '../api/gateway';
 import { Badge, Button, Card, Icon, ui } from './ui';
 import { colors } from '../theme';
+import { ProjectActivity } from './ProjectActivity';
 import { ProjectOperations } from './ProjectOperations';
 
 const inputStyle = {
@@ -57,6 +58,7 @@ export function Projects({
   onOpenSettings?: () => void;
   onOpenDemo?: () => void;
 }) {
+  const confirm = useConfirmation();
   const [connection, setConnection] = useState<Awaited<
     ReturnType<typeof fetchGitHubConnection>
   > | null>(null);
@@ -71,9 +73,9 @@ export function Projects({
   const cardWidth = Math.min(360, Math.max(240, width - 72));
   const [importing, setImporting] = useState(false);
   const [accountExpanded, setAccountExpanded] = useState(false);
-  const [section, setSection] = useState<'health' | 'deployment' | 'monitoring' | 'source'>(
-    'health',
-  );
+  const [section, setSection] = useState<
+    'health' | 'deployment' | 'monitoring' | 'source' | 'activity'
+  >('health');
   const [sourcePaths, setSourcePaths] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [projectsUnavailable, setProjectsUnavailable] = useState(false);
@@ -239,6 +241,7 @@ export function Projects({
     repo.fullName.toLowerCase().includes(search.toLowerCase()),
   );
   const tabs = [
+    { id: 'activity', label: 'Activity' },
     { id: 'health', label: 'Health' },
     { id: 'deployment', label: 'Deployment' },
     { id: 'monitoring', label: 'Alerts' },
@@ -358,7 +361,7 @@ export function Projects({
                 variant="ghost"
                 disabled={busy}
                 onPress={() =>
-                  Alert.alert(
+                  confirm(
                     'Disconnect GitHub?',
                     'Your saved projects and settings remain. Repository access will need a new connection.',
                     [
@@ -448,7 +451,7 @@ export function Projects({
                         <View style={{ gap: 7 }}>
                           <Text style={ui.label}>
                             {project.deployment
-                              ? `Vercel · ${project.deployment.target}`
+                              ? `${project.deployment.provider === 'local' ? 'This PC' : 'Vercel'} · ${project.deployment.target}`
                               : 'Deployment not linked'}
                           </Text>
                           <Text style={ui.label}>
@@ -589,6 +592,10 @@ export function Projects({
                 disabled={busy}
                 onPress={() => void run(() => browse())}
               />
+              <Text style={ui.label}>
+                Private repositories appear after you grant this app access on GitHub. Refresh this
+                list after updating permissions.
+              </Text>
               {connection.installationUrl ? (
                 <Button
                   label="Manage repository access on GitHub"
@@ -631,7 +638,7 @@ export function Projects({
               />
             ) : null}
           </Card>
-          <Text style={styles.sectionTitle}>Incident context</Text>
+          <Text style={styles.sectionTitle}>Project workspace</Text>
           <Text style={ui.body}>
             Settings below apply to {selected.repository.fullName}. Start with health, then add
             context for deeper investigations.
@@ -659,6 +666,9 @@ export function Projects({
             ))}
           </View>
           <Card>
+            {section === 'activity' ? (
+              <ProjectActivity key={selected.id} project={selected} observed={observed} />
+            ) : null}
             {section === 'health' ? (
               <>
                 <Text style={ui.title}>Service health</Text>
@@ -807,7 +817,7 @@ export function Projects({
             variant="ghost"
             disabled={busy}
             onPress={() =>
-              Alert.alert(
+              confirm(
                 'Remove this project?',
                 `Remove ${selected.repository.fullName} and its tracking settings from PocketSRE? Your GitHub repository will remain.`,
                 [

@@ -1,5 +1,5 @@
+import { useConfirmation } from '../components/ConfirmationModal';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import {
   IncidentBundleSchema,
@@ -17,6 +17,8 @@ import {
   injectDemoRegression,
   resetDemo,
 } from '../api/gateway';
+import { CloudTriageEngine } from '../ai/CloudTriageEngine';
+import type { CloudModel } from '../ai/providers';
 import { createTriageEngine, type ChatCompletion } from '../ai/LocalTriageEngine';
 import { createSampleIncident } from '../data/sampleIncident';
 import { loadConnection, saveConnection, type ConnectionSettings } from '../settings/connection';
@@ -34,7 +36,8 @@ import {
 } from '../storage/incidents';
 import { pickJsonFile, shareIncidentFile } from '../officekit/bundle';
 
-export function useIncident(modelPath?: string) {
+export function useIncident(modelPath?: string, cloudModel?: CloudModel) {
+  const confirm = useConfirmation();
   const [bundle, setBundle] = useState(createSampleIncident);
   const [analysis, setAnalysis] = useState<SavedDiagnosis | null>(null);
   const diagnosis = analysis?.value ?? null;
@@ -54,7 +57,10 @@ export function useIncident(modelPath?: string) {
   const ready = useRef(false);
   const mounted = useRef(true);
   const viewEpoch = useRef(0);
-  const engine = useMemo(() => createTriageEngine(modelPath), [modelPath]);
+  const engine = useMemo(
+    () => (cloudModel ? new CloudTriageEngine(cloudModel) : createTriageEngine(modelPath)),
+    [modelPath, cloudModel],
+  );
 
   async function loadHistory(url: string) {
     const result = await readIncidentHistory(url);
@@ -139,7 +145,7 @@ export function useIncident(modelPath?: string) {
         }
         try {
           await refreshInternal(saved.url);
-          if (!disposed) setMessage('Connected. Evidence is ready for local analysis.');
+          if (!disposed) setMessage('Connected. Evidence is ready for analysis.');
         } catch {
           if (!disposed)
             setMessage(
@@ -163,6 +169,11 @@ export function useIncident(modelPath?: string) {
       mounted.current = false;
       ready.current = false;
       viewEpoch.current++;
+    };
+  }, []);
+  useEffect(() => {
+    viewEpoch.current++;
+    return () => {
       void engine.release?.().catch(() => {});
     };
   }, [engine]);
@@ -182,7 +193,7 @@ export function useIncident(modelPath?: string) {
   const analyze = () =>
     run(async () => {
       viewEpoch.current++;
-      setMessage('Analyzing locally…');
+      setMessage(cloudModel ? 'Analyzing with the selected API model…' : 'Analyzing locally…');
       setAnalysis(null);
       const result = validatedDiagnosis(await engine.analyze(bundle), bundle);
       if (!mounted.current) return;
@@ -272,7 +283,7 @@ export function useIncident(modelPath?: string) {
       parameters: proposal.parameters,
       approvedAt: new Date().toISOString(),
     };
-    Alert.alert(
+    confirm(
       'Approve recovery action',
       `${proposal.reason}\n\nService: ${proposal.target}\nCurrent release: ${approved.expectedVersion ?? 'Unknown'}\nTarget release: ${proposal.parameters.targetRelease ?? 'unchanged'}\nRisk: ${proposal.risk}`,
       [
@@ -384,7 +395,7 @@ export function useIncident(modelPath?: string) {
     if (lock.current || !ready.current)
       throw new Error('Wait for the current operation to finish.');
     if (!engine.proposeFix)
-      throw new Error('Select a GGUF model in Settings before drafting a code fix.');
+      throw new Error('Select a local or API model in Settings before drafting a code fix.');
     lock.current = true;
     setBusy(true);
     try {
@@ -397,7 +408,8 @@ export function useIncident(modelPath?: string) {
   const chat: ChatCompletion = async (messages, onToken, signal) => {
     if (lock.current || !ready.current)
       throw new Error('Wait for the current operation to finish.');
-    if (!engine.chat) throw new Error('Download or import a model in Settings to use temporary chat.');
+    if (!engine.chat)
+      throw new Error('Select a local or API model in Settings to use temporary chat.');
     lock.current = true;
     setBusy(true);
     try {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { isFixPathAllowed } from '@pocketsre/incident-engine';
 import {
   RepositoryNameSchema,
   type GitHubDevice,
@@ -81,7 +82,7 @@ export class GitHubAccount {
     }
     return this.token;
   }
-  private async json(url: string, init: RequestInit) {
+  private async json(url: string, init: RequestInit, action = false) {
     const response = await (this.options.fetcher ?? fetch)(url, {
       ...init,
       redirect: 'error',
@@ -97,10 +98,78 @@ export class GitHubAccount {
             : response.status === 404
               ? 'This repository is unavailable to the connected GitHub account.'
               : 'GitHub could not complete the request.',
-        response.status === 401 ? 401 : 502,
+        action ? response.status : response.status === 401 ? 401 : 502,
       );
     }
     return boundedJson(response);
+  }
+  /** Explicit action boundary: the only account-token write operation. */
+  async mergePullRequest(
+    repository: string,
+    number: number,
+    sha: string,
+    method: 'merge' | 'squash' | 'rebase',
+  ) {
+    if (
+      !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
+      !Number.isSafeInteger(number) ||
+      number < 1 ||
+      !/^[0-9a-f]{40}$/.test(sha)
+    )
+      throw new ProjectRequestError('Invalid merge target.', 400);
+    return this.json(
+      `https://api.github.com/repos/${repository}/pulls/${number}/merge`,
+      {
+        method: 'PUT',
+        headers: {
+          authorization: `Bearer ${this.credential()}`,
+          accept: 'application/vnd.github+json',
+          'content-type': 'application/json',
+          'X-GitHub-Api-Version': '2026-03-10',
+          'user-agent': 'PocketSRE/0.1',
+        },
+        body: JSON.stringify({ sha, merge_method: method }),
+      },
+      true,
+    );
+  }
+  /** Explicit action boundary using the separately configured publication credential. */
+  async markPullRequestReady(nodeId: string, requestId: string, publicationToken: string) {
+    const result = await this.json(
+      'https://api.github.com/graphql',
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${publicationToken}`,
+          'content-type': 'application/json',
+          'user-agent': 'PocketSRE/0.1',
+        },
+        body: JSON.stringify({
+          query:
+            'mutation($id: ID!, $request: String!) { markPullRequestReadyForReview(input: {pullRequestId: $id, clientMutationId: $request}) { pullRequest { isDraft } } }',
+          variables: { id: nodeId, request: requestId },
+        }),
+      },
+      true,
+    );
+    const value = z
+      .object({
+        data: z
+          .object({
+            markPullRequestReadyForReview: z
+              .object({ pullRequest: z.object({ isDraft: z.boolean() }) })
+              .nullable(),
+          })
+          .nullable()
+          .optional(),
+        errors: z.array(z.unknown()).optional(),
+      })
+      .parse(result);
+    if (
+      value.errors?.length ||
+      value.data?.markPullRequestReadyForReview?.pullRequest.isDraft !== false
+    )
+      throw new ProjectRequestError('GitHub did not confirm this PR is ready.', 422);
   }
   async api(path: string) {
     const credential = this.credential();
@@ -276,6 +345,38 @@ export class GitHubAccount {
     } finally {
       this.busy = false;
     }
+  }
+  async files(name: string, branch: string) {
+    const value = z
+      .object({
+        truncated: z.boolean(),
+        tree: z.array(
+          z.object({
+            path: z.string(),
+            type: z.string(),
+            mode: z.string(),
+            size: z.number().optional(),
+          }),
+        ),
+      })
+      .parse(
+        await this.api(
+          `/repos/${RepositoryNameSchema.parse(name)}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+        ),
+      );
+    const paths = value.tree
+      .filter(
+        (item) =>
+          item.type === 'blob' &&
+          ['100644', '100755'].includes(item.mode) &&
+          (item.size ?? Infinity) <= 12000 &&
+          item.path.length <= 200 &&
+          /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_./@()-]+$/.test(item.path) &&
+          isFixPathAllowed(item.path),
+      )
+      .map((item) => item.path)
+      .sort();
+    return { paths: paths.slice(0, 3000), truncated: value.truncated || paths.length > 3000 };
   }
   async repositories(page: number) {
     const values = z

@@ -120,7 +120,7 @@ export const ActionProposalSchema = z.object({
 export type ActionProposal = z.infer<typeof ActionProposalSchema>;
 
 export const DiagnosisSchema = z.object({
-  mode: z.enum(['on-device-llm', 'organizer-runtime', 'deterministic']),
+  mode: z.enum(['on-device-llm', 'cloud-llm', 'organizer-runtime', 'deterministic']),
   summary: z.string().min(1),
   likelyCause: z.string().nullable(),
   confidence: ConfidenceSchema,
@@ -166,7 +166,10 @@ export const AuditEntrySchema = z.object({
   requestId: z.string(),
   incidentId: z.string(),
   serviceId: z.string(),
-  action: AllowedActionSchema,
+  action: z.union([
+    AllowedActionSchema,
+    z.enum(['MERGE_GITHUB_PULL_REQUEST', 'MARK_PULL_REQUEST_READY']),
+  ]),
   targetRelease: z.string().nullable(),
   result: ActionResultSchema,
 });
@@ -288,3 +291,6 @@ export const FixConfigSchema = z.object({
   repository: z.string().nullable(),
   paths: z.array(RepositoryPathSchema),
 });
+export * from './git.js';
+
+export * from './git-merge.js';

@@ -1,5 +1,7 @@
+import type { ChatSnapshot } from '../storage/chats';
+import { useConfirmation } from './ConfirmationModal';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Text, TextInput, View } from 'react-native';
+import { Linking, Text, TextInput, View } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import type {
   ActionResult,
@@ -11,6 +13,7 @@ import type {
 import { fetchFixConfig, fetchFixContext, prepareFix, publishFix } from '../api/gateway';
 import { Badge, Button, Card, ui } from './ui';
 import { colors } from '../theme';
+import { AgentChat, type AgentChatFiles } from './AgentChat';
 
 export function FixHarness({
   incidentId,
@@ -21,7 +24,15 @@ export function FixHarness({
   modelAvailable = true,
   onOpenSettings,
   projectId,
+  chatFiles,
+  onWorkingChange,
+  chatSession,
 }: {
+  chatSession?: {
+    initial: ChatSnapshot;
+    onChange: (snapshot: ChatSnapshot) => void;
+    onNew: () => void;
+  };
   incidentId: string;
   connected: boolean;
   busy: boolean;
@@ -30,7 +41,10 @@ export function FixHarness({
   modelAvailable?: boolean;
   onOpenSettings?: () => void;
   projectId?: string;
+  chatFiles?: AgentChatFiles;
+  onWorkingChange?: (working: boolean) => void;
 }) {
+  const confirm = useConfirmation();
   const agent = mode === 'agent';
   const api = {
     config: () => (projectId ? fetchFixConfig(projectId) : fetchFixConfig()),
@@ -43,15 +57,22 @@ export function FixHarness({
     publish: (approval: { draftId: string; requestId: string; approvedAt: string }) =>
       projectId ? publishFix(approval, projectId) : publishFix(approval),
   };
-  const [request, setRequest] = useState('');
-  const [conversation, setConversation] = useState<AgentTask['history']>([]);
+  const [request, setRequest] = useState(chatSession?.initial.request ?? '');
+  const [conversation, setConversation] = useState<AgentTask['history']>(
+    chatSession?.initial.conversation ?? [],
+  );
   const [activeRequest, setActiveRequest] = useState('');
   const [config, setConfig] = useState<Awaited<ReturnType<typeof fetchFixConfig>> | null>(null);
-  const [paths, setPaths] = useState<string[]>([]);
+  const [paths, setPaths] = useState<string[]>(chatSession?.initial.paths ?? []);
   const [draft, setDraft] = useState<FixDraft | null>(null);
   const [result, setResult] = useState<ActionResult | null>(null);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState('');
+  const saveSession = useRef(chatSession?.onChange);
+  saveSession.current = chatSession?.onChange;
+  useEffect(() => {
+    saveSession.current?.({ conversation, request, paths });
+  }, [conversation, request, paths]);
   const lock = useRef(false);
   const mounted = useRef(true);
   const activeScope = useRef({ connected, draftId: draft?.id });
@@ -76,6 +97,7 @@ export function FixHarness({
     if (lock.current || !mounted.current) return;
     lock.current = true;
     setWorking(true);
+    onWorkingChange?.(true);
     try {
       await work();
     } catch (error) {
@@ -83,6 +105,7 @@ export function FixHarness({
         setMessage(error instanceof Error ? error.message : 'The fix operation failed.');
     } finally {
       lock.current = false;
+      onWorkingChange?.(false);
       if (mounted.current) {
         setWorking(false);
         setActiveRequest('');
@@ -94,7 +117,7 @@ export function FixHarness({
   const awaitingResult = !result || result.status === 'running' || result.status === 'accepted';
   function publish() {
     if (!draft || disabled) return;
-    Alert.alert(
+    confirm(
       localDemo ? 'Deploy this fix to the local demo?' : 'Create this draft pull request?',
       `Repository: ${draft.repository}\nBase: ${draft.baseBranch} at ${draft.baseCommit.slice(0, 12)}\nFiles: ${draft.changes.map((change) => change.path).join(', ')}\n\n${localDemo ? 'The gateway will test this exact patch, replace checkout.mjs in the isolated running demo, and verify live HTTP health and checkout results. This does not deploy to a cloud service.' : 'The exact changes shown below will be published. Tests have not been run. Repository CI may run; PocketSRE will not merge or deploy the PR.'}`,
       [
@@ -131,6 +154,178 @@ export function FixHarness({
       ],
     );
   }
+  function send() {
+    return run(async () => {
+      const userRequest = request.trim();
+      if (disabled || !modelAvailable || !paths.length || (agent && !userRequest) || draft) return;
+      if (chatFiles) {
+        await chatFiles.prepare(paths);
+        const value = await api.config();
+        if (!mounted.current) return;
+        setConfig(value);
+      }
+      if (agent) setActiveRequest(userRequest);
+      setResult(null);
+      setMessage('Reading repository source…');
+      const context = await api.context(
+        incidentId,
+        paths,
+        agent ? { request: userRequest, history: conversation.slice(-4) } : undefined,
+      );
+      if (!mounted.current) return;
+      setMessage(
+        agent
+          ? 'The selected model is reading your request and selected source…'
+          : 'Generating an untested patch with the selected model…',
+      );
+      const proposal = await generate(context);
+      if (!mounted.current) return;
+      const prepared = proposal.edits.length ? await api.prepare(context.id, proposal) : null;
+      if (mounted.current) {
+        setDraft(prepared);
+        if (agent) {
+          setConversation((previous) => [
+            ...previous,
+            { role: 'user' as const, content: userRequest },
+            {
+              role: 'assistant' as const,
+              content:
+                `${proposal.summary}\nEvidence: ${proposal.evidenceIds.join(', ')}${proposal.edits.length ? `\nProposed changes (not applied): ${proposal.edits.map((edit) => `${edit.path}: ${edit.reason}`).join('; ')}` : ''}`.slice(
+                  0,
+                  2000,
+                ),
+            },
+          ]);
+          setRequest('');
+        }
+        setMessage(
+          prepared
+            ? 'Review every changed line before publishing. Evidence references are validated; correctness still needs review and tests.'
+            : 'Answer ready. You can ask a follow-up in Your request.',
+        );
+      }
+    });
+  }
+  const review = draft ? (
+    <Card>
+      <Text style={ui.title}>{agent ? 'Review proposed changes' : 'Review proposed fix'}</Text>
+      <Text style={ui.body}>{draft.proposal.summary}</Text>
+      <Text selectable style={ui.label}>
+        {draft.repository} · {draft.baseBranch} · {draft.baseCommit.slice(0, 12)}
+      </Text>
+      <Text selectable style={ui.label}>
+        Evidence: {draft.proposal.evidenceIds.join(', ')}
+      </Text>
+      <Badge>
+        {result?.status === 'succeeded' && localDemo
+          ? 'Tests and live probes passed'
+          : 'Tests not run'}
+      </Badge>
+      {draft.proposal.edits.map((edit, index) => (
+        <View key={index} style={{ gap: 8 }}>
+          <Text selectable style={ui.title}>
+            {edit.path}
+          </Text>
+          <Text style={ui.body}>{edit.reason}</Text>
+          <Text selectable style={ui.label}>
+            Evidence: {edit.evidenceIds.join(', ')}
+          </Text>
+          <Text style={ui.label}>Remove</Text>
+          <Text selectable style={ui.mono}>
+            {edit.before}
+          </Text>
+          <Text style={ui.label}>Insert</Text>
+          <Text selectable style={ui.mono}>
+            {edit.after || '(empty)'}
+          </Text>
+        </View>
+      ))}
+      {config?.canPublish === false ? (
+        <Text style={ui.body}>
+          This project has read-only source access. The patch is ready for review; a separate PR
+          credential is required to publish it.
+        </Text>
+      ) : null}
+      {awaitingResult && config?.canPublish !== false ? (
+        <Button
+          label={
+            approval.current
+              ? localDemo
+                ? 'Check deployment result'
+                : 'Check publication result'
+              : localDemo
+                ? 'Deploy demo fix'
+                : 'Create draft pull request'
+          }
+          disabled={disabled}
+          onPress={
+            approval.current
+              ? () =>
+                  void run(async () => {
+                    const published = await api.publish(approval.current!);
+                    if (mounted.current) {
+                      setResult(published);
+                      setMessage(published.message);
+                    }
+                  })
+              : publish
+          }
+        />
+      ) : null}
+      {result?.pullRequestUrl ? (
+        <Button
+          label="Open pull request"
+          disabled={working}
+          onPress={() => {
+            void Linking.openURL(result.pullRequestUrl!).catch(() =>
+              setMessage('Could not open GitHub.'),
+            );
+          }}
+        />
+      ) : null}
+      <Button
+        label={agent ? 'Continue conversation / clear draft' : 'Discard local draft'}
+        variant="ghost"
+        disabled={disabled || (!!approval.current && awaitingResult)}
+        onPress={() => {
+          setDraft(null);
+          setResult(null);
+          approval.current = null;
+          setMessage('');
+        }}
+      />
+    </Card>
+  ) : null;
+  if (chatFiles)
+    return (
+      <AgentChat
+        files={chatFiles}
+        request={request}
+        onRequest={setRequest}
+        paths={paths}
+        onPaths={setPaths}
+        conversation={conversation}
+        activeRequest={activeRequest}
+        working={working}
+        disabled={disabled}
+        modelAvailable={modelAvailable}
+        onOpenSettings={onOpenSettings}
+        review={review}
+        hasDraft={!!draft}
+        message={message}
+        onSend={() => void send()}
+        onNew={() => {
+          if (chatSession) {
+            chatSession.onNew();
+            return;
+          }
+          setConversation([]);
+          setRequest('');
+          setPaths([]);
+          setMessage('');
+        }}
+      />
+    );
   return (
     <>
       {agent && (conversation.length || activeRequest) ? (
@@ -183,10 +378,10 @@ export function FixHarness({
         </Text>
         <Text style={ui.body}>
           {localDemo
-            ? 'Draft a patch on your phone, review the changed line, then test and deploy it to the isolated checkout demo on your laptop.'
+            ? 'Draft a patch with your selected model, review the changed line, then test and deploy it to the isolated checkout demo on your laptop.'
             : agent
-              ? 'Ask about your code, request a feature, or improve an existing flow. The model runs on this phone and prepares changes for your review.'
-              : 'Read a few relevant files, draft a fix on your phone, review the exact changes, then create a draft PR.'}
+              ? 'Ask about your code, request a feature, or improve an existing flow. Your selected model prepares changes for your review.'
+              : 'Read a few relevant files, draft a fix with your selected model, review the exact changes, then create a draft PR.'}
         </Text>
         {agent && !localDemo ? (
           <Text style={ui.label}>
@@ -196,7 +391,9 @@ export function FixHarness({
         ) : null}
         {!modelAvailable ? (
           <>
-            <Text style={ui.body}>Download or import a model in Settings to use the agent.</Text>
+            <Text style={ui.body}>
+              Choose a local model or an API model in Settings to use the agent.
+            </Text>
             {onOpenSettings ? (
               <Button
                 label="Open model settings"
@@ -213,7 +410,7 @@ export function FixHarness({
           <>
             <Text style={ui.body}>
               Enable GitHub fixes on your gateway and choose which source files PocketSRE can read
-              and edit. Download or import a model in Settings to generate patches.
+              and edit. Choose a local or API model in Settings to generate patches.
             </Text>
             <Button
               label="Refresh repository access"
@@ -297,159 +494,20 @@ export function FixHarness({
                         ? 'Agent working…'
                         : 'Preparing fix…'
                       : agent
-                        ? 'Send to local agent'
-                        : 'Draft fix on this phone'
+                        ? 'Send to agent'
+                        : 'Draft fix'
                   }
                   disabled={
                     disabled || !paths.length || !modelAvailable || (agent && !request.trim())
                   }
-                  onPress={() =>
-                    void run(async () => {
-                      const userRequest = request.trim();
-                      if (agent) setActiveRequest(userRequest);
-                      setResult(null);
-                      setMessage('Reading repository source…');
-                      const context = await api.context(
-                        incidentId,
-                        paths,
-                        agent
-                          ? { request: userRequest, history: conversation.slice(-4) }
-                          : undefined,
-                      );
-                      if (!mounted.current) return;
-                      setMessage(
-                        agent
-                          ? 'The local model is reading your request and selected source…'
-                          : 'Generating an untested patch with the local model…',
-                      );
-                      const proposal = await generate(context);
-                      if (!mounted.current) return;
-                      const prepared = proposal.edits.length
-                        ? await api.prepare(context.id, proposal)
-                        : null;
-                      if (mounted.current) {
-                        setDraft(prepared);
-                        if (agent) {
-                          setConversation((previous) =>
-                            [
-                              ...previous,
-                              { role: 'user' as const, content: userRequest },
-                              {
-                                role: 'assistant' as const,
-                                content:
-                                  `${proposal.summary}\nEvidence: ${proposal.evidenceIds.join(', ')}${proposal.edits.length ? `\nProposed changes (not applied): ${proposal.edits.map((edit) => `${edit.path}: ${edit.reason}`).join('; ')}` : ''}`.slice(
-                                    0,
-                                    2000,
-                                  ),
-                              },
-                            ].slice(-12),
-                          );
-                          setRequest('');
-                        }
-                        setMessage(
-                          prepared
-                            ? 'Review every changed line before publishing. Evidence references are validated; correctness still needs review and tests.'
-                            : 'Answered on this phone. You can ask a follow-up in Your request.',
-                        );
-                      }
-                    })
-                  }
+                  onPress={() => void send()}
                 />
               </>
             ) : null}
           </>
         )}
       </Card>
-      {draft ? (
-        <Card>
-          <Text style={ui.title}>{agent ? 'Review proposed changes' : 'Review proposed fix'}</Text>
-          <Text style={ui.body}>{draft.proposal.summary}</Text>
-          <Text selectable style={ui.label}>
-            {draft.repository} · {draft.baseBranch} · {draft.baseCommit.slice(0, 12)}
-          </Text>
-          <Text selectable style={ui.label}>
-            Evidence: {draft.proposal.evidenceIds.join(', ')}
-          </Text>
-          <Badge>
-            {result?.status === 'succeeded' && localDemo
-              ? 'Tests and live probes passed'
-              : 'Tests not run'}
-          </Badge>
-          {draft.proposal.edits.map((edit, index) => (
-            <View key={index} style={{ gap: 8 }}>
-              <Text selectable style={ui.title}>
-                {edit.path}
-              </Text>
-              <Text style={ui.body}>{edit.reason}</Text>
-              <Text selectable style={ui.label}>
-                Evidence: {edit.evidenceIds.join(', ')}
-              </Text>
-              <Text style={ui.label}>Remove</Text>
-              <Text selectable style={ui.mono}>
-                {edit.before}
-              </Text>
-              <Text style={ui.label}>Insert</Text>
-              <Text selectable style={ui.mono}>
-                {edit.after || '(empty)'}
-              </Text>
-            </View>
-          ))}
-          {config?.canPublish === false ? (
-            <Text style={ui.body}>
-              This project has read-only source access. The patch is ready for review; a separate PR
-              credential is required to publish it.
-            </Text>
-          ) : null}
-          {awaitingResult && config?.canPublish !== false ? (
-            <Button
-              label={
-                approval.current
-                  ? localDemo
-                    ? 'Check deployment result'
-                    : 'Check publication result'
-                  : localDemo
-                    ? 'Deploy demo fix'
-                    : 'Create draft pull request'
-              }
-              disabled={disabled}
-              onPress={
-                approval.current
-                  ? () =>
-                      void run(async () => {
-                        const published = await api.publish(approval.current!);
-                        if (mounted.current) {
-                          setResult(published);
-                          setMessage(published.message);
-                        }
-                      })
-                  : publish
-              }
-            />
-          ) : null}
-          {result?.pullRequestUrl ? (
-            <Button
-              label="Open pull request"
-              disabled={working}
-              onPress={() => {
-                void Linking.openURL(result.pullRequestUrl!).catch(() =>
-                  setMessage('Could not open GitHub.'),
-                );
-              }}
-            />
-          ) : null}
-          <Button
-            label={agent ? 'Continue conversation / clear draft' : 'Discard local draft'}
-            variant="ghost"
-            disabled={disabled || (!!approval.current && awaitingResult)}
-            onPress={() => {
-              setDraft(null);
-              setResult(null);
-              approval.current = null;
-              setMessage('');
-            }}
-          />
-        </Card>
-      ) : null}
+      {review}
       {message ? (
         <Text accessibilityLiveRegion="polite" style={ui.body}>
           {message}

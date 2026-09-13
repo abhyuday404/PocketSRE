@@ -2,6 +2,7 @@
   "expo": {
     "name": "PocketSRE",
     "slug": "pocketsre",
+    "owner": "abhyuday404",
     "version": "0.1.0",
     "platforms": ["android"],
     "orientation": "portrait",
@@ -36,6 +37,9 @@
       ]
     ],
     "extra": {
+      "eas": {
+        "projectId": "ca83344f-d4bd-436f-956d-37aa575ace48"
+      },
       "supportsOfflineTriage": true
     }
   }

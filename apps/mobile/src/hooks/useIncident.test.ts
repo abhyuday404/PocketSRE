@@ -8,7 +8,7 @@ import { cacheIncident, cacheDiagnosis, cacheOfflineIncident } from '../storage/
 import type { Diagnosis } from '@pocketsre/contracts';
 
 const native = vi.hoisted(() => ({
-  alert: vi.fn(),
+  confirm: vi.fn(),
   fetchCurrentIncident: vi.fn(),
   fetchGatewayMode: vi.fn(),
   executeApprovedAction: vi.fn(),
@@ -17,7 +17,8 @@ const native = vi.hoisted(() => ({
   analyze: vi.fn(),
   chat: vi.fn(),
 }));
-vi.mock('react-native', () => ({ Alert: { alert: native.alert } }));
+
+vi.mock('../components/ConfirmationModal', () => ({ useConfirmation: () => native.confirm }));
 vi.mock('../api/gateway', () => ({
   configureGateway: vi.fn(),
   fetchCurrentIncident: native.fetchCurrentIncident,
@@ -255,7 +256,7 @@ it('rejects a delayed action approval after reopening offline evidence', async (
   await act(async () => {
     state.confirmAction();
   });
-  const approve = native.alert.mock.calls[0]![2].find(
+  const approve = native.confirm.mock.calls[0]![2].find(
     (button: { text: string }) => button.text === 'Approve',
   ).onPress;
   await act(async () => {
@@ -287,7 +288,7 @@ it('requires a fresh gateway match even before approving a cached read-only acti
   await act(async () => {
     state.confirmAction();
   });
-  expect(native.alert).not.toHaveBeenCalled();
+  expect(native.confirm).not.toHaveBeenCalled();
   expect(native.executeApprovedAction).not.toHaveBeenCalled();
   native.fetchCurrentIncident.mockResolvedValue(bundle);
   native.fetchGatewayMode.mockResolvedValue('live');
@@ -299,7 +300,7 @@ it('requires a fresh gateway match even before approving a cached read-only acti
   await act(async () => {
     state.confirmAction();
   });
-  const approve = native.alert.mock.calls[0]![2].find(
+  const approve = native.confirm.mock.calls[0]![2].find(
     (button: { text: string }) => button.text === 'Approve',
   ).onPress;
   await act(async () => {
@@ -386,7 +387,7 @@ it('persists unknown health and only approves a fresh read-only check with a nul
   expect(state.diagnosis).toEqual(analysis);
   expect(state.canExecute).toBe(false);
   await act(async () => state.confirmAction());
-  expect(native.alert).not.toHaveBeenCalled();
+  expect(native.confirm).not.toHaveBeenCalled();
 
   native.fetchCurrentIncident.mockResolvedValue(bundle);
   native.executeApprovedAction.mockResolvedValue({ message: 'Fresh probe completed.' });
@@ -394,7 +395,7 @@ it('persists unknown health and only approves a fresh read-only check with a nul
     await state.refresh();
   });
   await act(async () => state.confirmAction());
-  const approve = native.alert.mock.calls[0]![2].find(
+  const approve = native.confirm.mock.calls[0]![2].find(
     (button: { text: string }) => button.text === 'Approve',
   ).onPress;
   await act(async () => approve());

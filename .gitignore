@@ -11,6 +11,9 @@ coverage/
 *.keystore
 *.jks
 credentials.json
+google-services*.json
+*firebase-adminsdk*.json
+fcm-service-account*.json
 *.p12
 *.pfx
 *.apk

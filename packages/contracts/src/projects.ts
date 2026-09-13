@@ -55,7 +55,7 @@ export const TrackedProjectSchema = z.object({
   monitoring: z.boolean().default(false),
   deployment: z
     .object({
-      provider: z.literal('vercel'),
+      provider: z.enum(['vercel', 'local']),
       projectId: z.string().regex(/^[A-Za-z0-9_-]{1,120}$/),
       name: z.string().max(200),
       target: z.enum(['production', 'preview']),
@@ -91,3 +91,8 @@ export const PushTokenSchema = z
   .string()
   .max(300)
   .regex(/^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]+\]$/);
+
+export const ProjectFilesSchema = z.object({
+  paths: z.array(z.string().min(1).max(200)).max(3000),
+  truncated: z.boolean(),
+});

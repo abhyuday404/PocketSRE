@@ -4,6 +4,8 @@ PocketSRE is a single-user development prototype, not a hardened production cont
 
 ## Credentials and data
 
+- Optional AI API keys are entered in Settings and stored in Expo Secure Store on the phone. Cloud inference sends prompts, relevant evidence and selected source directly to the selected provider, under its policies and billing. Local inference remains the default. Keys are scoped to the selected provider and endpoint and never go through the gateway. See [API model boundaries](api-models.md).
+
 - Provider tokens stay in gateway environment variables. The phone's gateway credential uses Expo Secure Store, backed by Android Keystore; do not put secrets in `EXPO_PUBLIC_*` variables.
 - The gateway requires bearer authentication when its server entry point binds outside loopback. The demo service is unauthenticated and must stay on loopback or an isolated container network.
 - Use HTTPS or a secure tunnel for remote access. The gateway does not terminate TLS, implement user accounts/RBAC, or rate-limit authenticated requests.
@@ -26,3 +28,5 @@ PocketSRE is a single-user development prototype, not a hardened production cont
 ## Laptop tools
 
 The investigator reads bounded source files and `.env.example` key names. It does not execute repository code, read `.env`, run tests, or inspect production. Imported findings are untrusted evidence, not executable instructions. Investigation imports must match the current incident and cite existing evidence IDs.
+
+- Confirmed project PR merges use a separate authenticated action endpoint with five-minute approvals, revalidated merge readiness, pinned head SHAs and a persisted request ledger. GitHub account tokens now have Contents write permission for this boundary; ordinary collection remains GET-only. Uncertain write outcomes are never retried automatically. No branch-protection bypass or branch deletion is requested.

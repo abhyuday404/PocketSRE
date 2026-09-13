@@ -1,5 +1,6 @@
+import { useConfirmation } from './ConfirmationModal';
 import { useEffect, useState } from 'react';
-import { Alert, Text, TextInput, View } from 'react-native';
+import { Text, TextInput, View } from 'react-native';
 import type { TrackedProject } from '@pocketsre/contracts';
 import {
   bindDeployment,
@@ -25,6 +26,7 @@ export function ProjectOperations({
   onBusyChange?: (busy: boolean) => void;
   onChange: (project: TrackedProject) => void;
 }) {
+  const confirm = useConfirmation();
   const [provider, setProvider] = useState<Awaited<
     ReturnType<typeof fetchVercelConnection>
   > | null>(null);
@@ -82,125 +84,136 @@ export function ProjectOperations({
           <Text style={ui.title}>Deployment and logs</Text>
           <Badge>
             {project.deployment
-              ? `Vercel · ${project.deployment.name} · ${project.deployment.target}`
+              ? `${project.deployment.provider === 'local' ? 'This PC' : 'Vercel'} · ${project.deployment.name} · ${project.deployment.target}`
               : 'No deployment linked'}
           </Badge>
-          <Text style={ui.body}>
-            Connect Vercel, confirm the matching project and environment, then refresh project
-            health to collect build and runtime log evidence. Access and log retention depend on the
-            provider.
-          </Text>
-          {!provider?.connected ? (
-            <>
-              <TextInput
-                accessibilityLabel="Vercel access token"
-                placeholder="Vercel access token"
-                secureTextEntry
-                autoCapitalize="none"
-                autoCorrect={false}
-                value={token}
-                onChangeText={setToken}
-                style={input}
-                editable={!busy}
-              />
-              <TextInput
-                accessibilityLabel="Vercel team ID"
-                placeholder="Team ID (optional)"
-                autoCapitalize="none"
-                value={team}
-                onChangeText={setTeam}
-                style={input}
-                editable={!busy}
-              />
-              <Text style={ui.label}>
-                Use a token scoped to the intended project/team. It stays in gateway memory and must
-                be reconnected after a restart unless configured by its administrator.
-              </Text>
-              <Button
-                label="Connect Vercel"
-                disabled={busy || !token.trim()}
-                onPress={() =>
-                  void run(async () => {
-                    const secret = token;
-                    setToken('');
-                    setProvider(await connectVercel(secret.trim(), team.trim()));
-                  })
-                }
-              />
-            </>
+          {project.deployment?.provider === 'local' ? (
+            <Text style={ui.body}>
+              Runs on your PC. Push to main to redeploy automatically. Refresh project health to see
+              deployment and runtime logs in Activity → Evidence. Keep the PC awake and connected.
+            </Text>
           ) : (
             <>
-              <Button
-                label="Find Vercel projects"
-                disabled={busy}
-                onPress={() =>
-                  void run(async () => setCandidates(await fetchDeploymentProjects(project.id)))
-                }
-              />
-              <Button
-                label="Disconnect Vercel"
-                variant="ghost"
-                disabled={busy}
-                onPress={() =>
-                  void run(async () => {
-                    setProvider(await disconnectVercel());
-                    setCandidates(null);
-                  })
-                }
-              />
+              <Text style={ui.body}>
+                Connect Vercel, confirm the matching project and environment, then refresh project
+                health to collect build and runtime log evidence. Access and log retention depend on
+                the provider.
+              </Text>
+              {!provider?.connected ? (
+                <>
+                  <TextInput
+                    accessibilityLabel="Vercel access token"
+                    placeholder="Vercel access token"
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    value={token}
+                    onChangeText={setToken}
+                    style={input}
+                    editable={!busy}
+                  />
+                  <TextInput
+                    accessibilityLabel="Vercel team ID"
+                    placeholder="Team ID (optional)"
+                    autoCapitalize="none"
+                    value={team}
+                    onChangeText={setTeam}
+                    style={input}
+                    editable={!busy}
+                  />
+                  <Text style={ui.label}>
+                    Use a token scoped to the intended project/team. It stays in gateway memory and
+                    must be reconnected after a restart unless configured by its administrator.
+                  </Text>
+                  <Button
+                    label="Connect Vercel"
+                    disabled={busy || !token.trim()}
+                    onPress={() =>
+                      void run(async () => {
+                        const secret = token;
+                        setToken('');
+                        setProvider(await connectVercel(secret.trim(), team.trim()));
+                      })
+                    }
+                  />
+                </>
+              ) : (
+                <>
+                  <Button
+                    label="Find Vercel projects"
+                    disabled={busy}
+                    onPress={() =>
+                      void run(async () => setCandidates(await fetchDeploymentProjects(project.id)))
+                    }
+                  />
+                  <Button
+                    label="Disconnect Vercel"
+                    variant="ghost"
+                    disabled={busy}
+                    onPress={() =>
+                      void run(async () => {
+                        setProvider(await disconnectVercel());
+                        setCandidates(null);
+                      })
+                    }
+                  />
+                </>
+              )}
+              {candidates ? (
+                <>
+                  <Button
+                    label={`Environment: ${target}`}
+                    variant="outline"
+                    disabled={busy}
+                    onPress={() => setTarget(target === 'production' ? 'preview' : 'production')}
+                  />
+                  {candidates.projects.map((candidate) => (
+                    <Button
+                      key={candidate.id}
+                      label={`${candidate.suggested ? 'Suggested: ' : ''}${candidate.name}`}
+                      variant="outline"
+                      disabled={busy}
+                      onPress={() =>
+                        confirm(
+                          'Link this deployment?',
+                          `${project.repository.fullName}\nVercel: ${candidate.name}\nEnvironment: ${target}\nOnly deployment status and logs are read.`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Link project',
+                              onPress: () =>
+                                void run(async () => {
+                                  onChange(await bindDeployment(project.id, candidate.id, target));
+                                  setCandidates(null);
+                                }),
+                            },
+                          ],
+                        )
+                      }
+                    />
+                  ))}
+                  {!candidates.projects.length ? (
+                    <Text style={ui.body}>
+                      No projects returned. Check the token and team, or load another page.
+                    </Text>
+                  ) : null}
+                  {candidates.next ? (
+                    <Button
+                      label="More Vercel projects"
+                      disabled={busy}
+                      onPress={() =>
+                        void run(async () =>
+                          setCandidates(
+                            await fetchDeploymentProjects(project.id, candidates.next!),
+                          ),
+                        )
+                      }
+                    />
+                  ) : null}
+                </>
+              ) : null}
             </>
           )}
-          {candidates ? (
-            <>
-              <Button
-                label={`Environment: ${target}`}
-                variant="outline"
-                disabled={busy}
-                onPress={() => setTarget(target === 'production' ? 'preview' : 'production')}
-              />
-              {candidates.projects.map((candidate) => (
-                <Button
-                  key={candidate.id}
-                  label={`${candidate.suggested ? 'Suggested: ' : ''}${candidate.name}`}
-                  variant="outline"
-                  disabled={busy}
-                  onPress={() =>
-                    Alert.alert(
-                      'Link this deployment?',
-                      `${project.repository.fullName}\nVercel: ${candidate.name}\nEnvironment: ${target}\nOnly deployment status and logs are read.`,
-                      [
-                        { text: 'Cancel', style: 'cancel' },
-                        {
-                          text: 'Link project',
-                          onPress: () =>
-                            void run(async () => {
-                              onChange(await bindDeployment(project.id, candidate.id, target));
-                              setCandidates(null);
-                            }),
-                        },
-                      ],
-                    )
-                  }
-                />
-              ))}
-              {!candidates.projects.length ? (
-                <Text style={ui.body}>
-                  No projects returned. Check the token and team, or load another page.
-                </Text>
-              ) : null}
-              {candidates.next ? (
-                <Button
-                  label="More Vercel projects"
-                  disabled={busy}
-                  onPress={() =>
-                    void run(async () =>
-                      setCandidates(await fetchDeploymentProjects(project.id, candidates.next!)),
-                    )
-                  }
-                />
-              ) : null}
-            </>
-          ) : null}
           {project.deployment ? (
             <Button
               label="Unlink deployment"
@@ -248,11 +261,15 @@ export function ProjectOperations({
           />
           <Button
             label="Enable alerts on this phone"
-            disabled={busy || !project.monitoring}
+            disabled={busy}
             onPress={() =>
               void run(async () => {
                 await enableProjectNotifications(project.id);
-                setNotice('This phone is subscribed to outage and recovery alerts.');
+                setNotice(
+                  project.monitoring
+                    ? 'This phone is subscribed to outage and recovery alerts.'
+                    : 'This phone is subscribed. Add a health endpoint and enable background monitoring to receive outage and recovery alerts.',
+                );
               })
             }
           />

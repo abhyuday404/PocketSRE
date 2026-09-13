@@ -107,7 +107,8 @@ test('prebuild profiles isolate install IDs and permit local HTTP only in test b
           ? 'pocketsre-internal'
           : 'pocketsre-dev',
     );
-    assert.equal(config.slug, config.scheme);
+    assert.equal(config.slug, 'pocketsre');
+    assert.equal(config.extra.eas.projectId, baseConfig.extra.eas.projectId);
     assert.equal(config.newArchEnabled, true);
     const properties = config.plugins.find((plugin) => plugin[0] === 'expo-build-properties')[1]
       .android;

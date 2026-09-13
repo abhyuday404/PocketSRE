@@ -1,3 +1,4 @@
+import { mergeAudit } from './project-merge.js';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
@@ -66,11 +67,15 @@ export function registerProjectAgent(
     const existing = children.get(project.id);
     if (existing?.key === key) return existing.app;
     if (existing) await existing.app.close();
+    const fixToken =
+      !options.fixRepositories || options.fixRepositories.includes(project.repository.fullName)
+        ? options.fixToken
+        : undefined;
     const base = project.sourcePaths.length
       ? new GitHubFixRepository(
           project.repository.fullName,
           project.sourcePaths,
-          options.fixToken ?? '',
+          fixToken ?? '',
           async (input, init) => {
             if (!init?.method || init.method === 'GET')
               return options.github.readRepositoryResponse(
@@ -78,7 +83,7 @@ export function registerProjectAgent(
                 input,
                 init,
               );
-            if (!options.fixToken)
+            if (!fixToken)
               throw new FixDeploymentError(
                 'Project source access is read-only. Configure a separate PR credential before publishing.',
               );
@@ -90,12 +95,11 @@ export function registerProjectAgent(
       ? {
           repository: base.repository,
           paths: base.paths,
-          canPublish: !!options.fixToken,
+          canPublish: !!fixToken,
           readSource: (paths) => base.readSource(paths),
           assertHead: (context) => base.assertHead(context),
           publish: (context, draft) => {
-            if (!options.fixToken)
-              throw new FixDeploymentError('Project source access is read-only.');
+            if (!fixToken) throw new FixDeploymentError('Project source access is read-only.');
             return base.publish(context, draft);
           },
         }
@@ -135,6 +139,25 @@ export function registerProjectAgent(
     children.set(project.id, { key, app: gateway });
     return gateway;
   }
+  app.get('/v1/projects/:id/activity/actions', async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const response = await serial(id, async () => {
+      const gateway = await child(await options.store.get(id));
+      return gateway.inject({ method: 'GET', url: '/v1/actions/audit' });
+    });
+    if (response.statusCode !== 200)
+      return reply.code(response.statusCode).type('application/json').send(response.body);
+    const merges = (await mergeAudit(options.store, id)).list();
+    const entries = [
+      ...response.json<{ entries: import('@pocketsre/contracts').AuditEntry[] }>().entries,
+      ...merges,
+    ];
+    return {
+      entries: entries
+        .sort((a, b) => b.result.startedAt.localeCompare(a.result.startedAt))
+        .slice(0, 100),
+    };
+  });
   app.route({
     method: ['GET', 'POST'],
     url: '/v1/projects/:id/fixes/:operation',

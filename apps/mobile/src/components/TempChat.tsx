@@ -9,11 +9,13 @@ export function TempChat({
   busy,
   modelAvailable,
   onOpenSettings,
+  cloudModelLabel,
 }: {
   chat: ChatCompletion;
   busy: boolean;
   modelAvailable: boolean;
   onOpenSettings: () => void;
+  cloudModelLabel?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -93,14 +95,15 @@ export function TempChat({
     <>
       <Card>
         <Text style={ui.title}>Temporary model chat</Text>
-        <Badge>On this phone · session only</Badge>
+        <Badge>{cloudModelLabel ?? 'On this phone · session only'}</Badge>
         <Text style={ui.body}>
-          Talk directly to your on-device model. No repository, gateway, evidence citations, or
+          Talk directly to your selected model. No repository, gateway, evidence citations, or
           structured answers required.
         </Text>
         <Text style={ui.label}>
-          No app-added system prompt. Messages stay in memory until you clear chat, change models,
-          or restart the app. This chat has no tools or repository access.
+          {cloudModelLabel
+            ? 'Messages are sent to your selected API provider; its data policies and charges apply. This app keeps chat in memory until you clear it, change models, or restart.'
+            : 'No app-added system prompt. Messages stay in memory until you clear chat, change models, or restart the app. This chat has no tools or repository access.'}
         </Text>
         {!modelAvailable ? (
           <Button

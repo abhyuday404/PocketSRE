@@ -1,3 +1,4 @@
+import type { LocalDeployments } from './local-deployments.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -14,6 +15,7 @@ import { GitHubAccount, ProjectRequestError } from './github-account.js';
 import { createLiveBundleLoader } from './connectors.js';
 import { VercelProvider } from './providers.js';
 import { ProjectMonitor, type PushTransport } from './project-monitor.js';
+import { registerProjectGit } from './project-git.js';
 import { registerProjectAgent } from './project-agent.js';
 
 const stateSchema = z
@@ -79,8 +81,10 @@ export class ProjectStore {
 
 export type ProjectOptions = {
   vercel?: VercelProvider;
+  localDeployments?: LocalDeployments;
   monitor?: { path: string; push: PushTransport; intervalMs?: number };
   fixToken?: string;
+  fixRepositories?: string[];
   github: GitHubAccount;
   store: ProjectStore;
   allowedHealthOrigins: string[];
@@ -88,6 +92,7 @@ export type ProjectOptions = {
 };
 
 export function registerProjectRoutes(app: FastifyInstance, options?: ProjectOptions) {
+  registerProjectGit(app, options);
   const loaders = new Map<
     string,
     { url: string; load: ReturnType<typeof createLiveBundleLoader>; selection: { logs: boolean } }
@@ -156,6 +161,12 @@ export function registerProjectRoutes(app: FastifyInstance, options?: ProjectOpt
     return requireOptions().github.repositories(page);
   });
   app.get('/v1/projects', async () => ({ projects: options ? await options.store.list() : [] }));
+  app.get('/v1/projects/:id/files', async (request) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const { store, github } = requireOptions();
+    const project = await store.get(id);
+    return github.files(project.repository.fullName, project.repository.defaultBranch);
+  });
   app.post('/v1/projects', async (request) => {
     const { repository: name } = z
       .object({ repository: RepositoryNameSchema })
@@ -223,8 +234,13 @@ export function registerProjectRoutes(app: FastifyInstance, options?: ProjectOpt
           connectors: () =>
             selection.logs && project.deployment
               ? (['build', 'runtime'] as const).map((kind) => ({
-                  name: `Vercel ${kind} logs`,
+                  name: `${project.deployment?.provider === 'local' ? 'PC deployment' : 'Vercel'} ${kind} logs`,
                   collect: async () => {
+                    if (project.deployment?.provider === 'local') {
+                      if (!options?.localDeployments)
+                        throw new Error('PC deployments are not configured.');
+                      return options.localDeployments.evidence(project, kind);
+                    }
                     if (!options?.vercel) throw new Error('Vercel is not configured.');
                     return options.vercel.evidence(project, kind);
                   },
@@ -306,6 +322,31 @@ export function registerProjectRoutes(app: FastifyInstance, options?: ProjectOpt
     const { cursor } = z.object({ cursor: z.string().max(120).optional() }).parse(request.query);
     const project = await requireOptions().store.get(id);
     return provider().projects(project.repository.fullName, cursor);
+  });
+  app.put('/v1/projects/:id/deployment/local', async (request) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const store = requireOptions().store;
+    const project = await store.get(id);
+    const local = await options?.localDeployments?.project(project.repository.fullName);
+    if (!local)
+      throw new ProjectRequestError('This project is not configured in the PC deployment service.', 409);
+    await store.update((projects) =>
+      projects.map((p) =>
+        p.id === id
+          ? {
+              ...p,
+              deployment: {
+                provider: 'local' as const,
+                projectId: local.name,
+                name: local.name,
+                target: 'production' as const,
+              },
+            }
+          : p,
+      ),
+    );
+    loaders.delete(id);
+    return store.get(id);
   });
   app.put('/v1/projects/:id/deployment', async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);

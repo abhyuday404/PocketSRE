@@ -22,11 +22,11 @@ export class AuditStore {
   get(id: string) {
     return this.records.get(id);
   }
-  list(): AuditEntry[] {
+  list(limit = 100): AuditEntry[] {
     return [...this.records.values()]
       .map((item) => item.entry)
       .reverse()
-      .slice(0, 100);
+      .slice(0, limit);
   }
   async save(entry: AuditEntry, fingerprint: string) {
     this.records.set(entry.requestId, { entry, fingerprint });

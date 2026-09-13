@@ -100,3 +100,28 @@ it('never opens a provider-controlled verification URL', async () => {
   });
   await expect(github.start()).rejects.toThrow();
 });
+
+it('lists attachable files from the selected branch without secrets, symlinks or oversized files', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+    json({
+      truncated: false,
+      tree: [
+        { path: 'src/app.ts', type: 'blob', mode: '100644', size: 80 },
+        { path: '.env', type: 'blob', mode: '100644', size: 80 },
+        { path: '.github/workflows/run.yml', type: 'blob', mode: '100644', size: 80 },
+        { path: 'link.ts', type: 'blob', mode: '120000', size: 80 },
+        { path: 'big.ts', type: 'blob', mode: '100644', size: 12001 },
+        { path: 'src', type: 'tree', mode: '040000' },
+        { path: '../escape.ts', type: 'blob', mode: '100644', size: 80 },
+      ],
+    }),
+  );
+  const github = new GitHubAccount({ token: 'test-fixture', fetcher });
+  expect(await github.files('owner/private', 'feature/agent')).toEqual({
+    paths: ['src/app.ts'],
+    truncated: false,
+  });
+  expect(fetcher.mock.calls[0]![0]).toBe(
+    'https://api.github.com/repos/owner/private/git/trees/feature%2Fagent?recursive=1',
+  );
+});

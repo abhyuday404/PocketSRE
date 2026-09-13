@@ -2,7 +2,7 @@
 
 Your incident-response desk, in your pocket. **SRE** stands for **Site Reliability Engineering**.
 
-PocketSRE is a phone-first prototype that collects operational evidence, analyzes it locally, and proposes evidence-backed recovery with human approval. The demo is functional end to end; this is not a production operations platform yet.
+PocketSRE is a phone-first prototype that collects operational evidence, analyzes it locally by default or through an optional user-configured API model, and proposes evidence-backed recovery with human approval. The demo is functional end to end; this is not a production operations platform yet.
 
 ## Implemented
 
@@ -62,6 +62,8 @@ Open **PocketSRE development** and select the Metro server. For later JavaScript
 For Wi-Fi, follow [LAN connection setup](docs/connectors.md#lan-connection): enable gateway LAN binding and configure a strong shared token. Do not expose the unauthenticated demo service. Use HTTPS or a secure tunnel outside trusted local development.
 
 ## Local AI
+
+**Settings → AI model** lets you keep an on-device model or opt into OpenAI, Anthropic, Gemini, OpenRouter, or an OpenAI-compatible API using your own key. The selection applies to analysis, code assistance, and chat. Keys stay in secure phone storage; cloud prompts and selected context go directly to the chosen provider. See [API model setup and data handling](docs/api-models.md).
 
 For a short, hands-on presentation with a one-line regression and phone-approved local deployment, see the [five-minute demo](docs/five-minute-demo.md). Start its isolated services with `pnpm demo:reviewers`.
 

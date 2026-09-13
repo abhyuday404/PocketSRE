@@ -14,9 +14,10 @@ const api = vi.hoisted(() => ({
   poll: vi.fn(),
   disconnect: vi.fn(),
   remove: vi.fn(),
-  alert: vi.fn(),
+  confirm: vi.fn(),
   open: vi.fn(),
 }));
+vi.mock('./ConfirmationModal', () => ({ useConfirmation: () => api.confirm }));
 vi.mock('react-native', () => ({
   Text: 'Text',
   TextInput: 'TextInput',
@@ -27,7 +28,6 @@ vi.mock('react-native', () => ({
   StyleSheet: { create: (s: unknown) => s },
   useWindowDimensions: () => ({ width: 390, height: 844 }),
   Linking: { openURL: api.open },
-  Alert: { alert: api.alert },
 }));
 vi.mock('./ui', () => ({ Button: 'Button', Card: 'Card', Badge: 'Badge', Icon: 'Icon', ui: {} }));
 vi.mock('../api/gateway', () => ({
@@ -44,6 +44,7 @@ vi.mock('../api/gateway', () => ({
   removeProject: api.remove,
 }));
 import { Projects } from './Projects';
+vi.mock('./ProjectActivity', () => ({ ProjectActivity: 'ProjectActivity' }));
 vi.mock('./ProjectOperations', () => ({ ProjectOperations: 'ProjectOperations' }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -335,7 +336,7 @@ it('removes only the confirmed project without depending on another GitHub reque
     button('Remove project').props.onPress();
   });
   expect(api.remove).not.toHaveBeenCalled();
-  const actions = api.alert.mock.calls[0]![2];
+  const actions = api.confirm.mock.calls[0]![2];
   api.projects.mockRejectedValue(new Error('Gateway read failed'));
   await act(async () => {
     await actions.find((a: { text: string }) => a.text === 'Remove project').onPress();
@@ -361,7 +362,7 @@ it('keeps a project and reports a failed removal, then allows retry', async () =
   await act(async () => {
     button('Remove project').props.onPress();
   });
-  const confirm = api.alert.mock.calls[0]![2].find(
+  const confirm = api.confirm.mock.calls[0]![2].find(
     (a: { text: string }) => a.text === 'Remove project',
   ).onPress;
   await act(async () => {
@@ -376,4 +377,18 @@ it('keeps a project and reports a failed removal, then allows retry', async () =
   expect(renderer!.root.findByProps({ accessibilityLabel: 'Project count' }).props.children).toBe(
     '0 projects · Add a project',
   );
+});
+
+it('opens activity inside the selected project workspace', async () => {
+  api.projects.mockResolvedValue([project]);
+  await act(async () => {
+    renderer = create(<Projects />);
+  });
+  await act(async () => {
+    button('Open reviewer/checkout').props.onPress();
+  });
+  await act(async () => {
+    button('Activity').props.onPress();
+  });
+  expect(renderer!.root.findByType('ProjectActivity' as never).props.project.id).toBe(project.id);
 });

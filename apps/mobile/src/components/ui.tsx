@@ -14,6 +14,7 @@ import { colors } from '../theme';
 
 export type IconName =
   | 'github'
+  | 'bot'
   | 'terminal'
   | 'activity'
   | 'server'
@@ -28,6 +29,14 @@ export type IconName =
 type Segment = [number, number, number, number];
 const paths: Record<IconName, Segment[]> = {
   github: [],
+  bot: [
+    [12, 3, 12, 6],
+    [2, 11, 2, 15],
+    [22, 11, 22, 15],
+    [9, 11, 9, 12],
+    [15, 11, 15, 12],
+    [9, 16, 15, 16],
+  ],
   terminal: [
     [5, 7, 10, 12],
     [10, 12, 5, 17],
@@ -135,6 +144,7 @@ export function Icon({
           {box(2, 13, 20, 8, 2, 'b')}
         </>
       ) : null}
+      {name === 'bot' ? box(5, 6, 14, 14, 3, 'head') : null}
       {name === 'clock' ? box(3, 3, 18, 18, 10, 'circle') : null}
       {name === 'settings' ? (
         <>

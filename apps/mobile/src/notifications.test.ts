@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   last: vi.fn(),
   clear: vi.fn(),
   handler: vi.fn(),
+  eas: { projectId: undefined as string | undefined },
+}));
+vi.mock('expo-constants', () => ({
+  default: { expoConfig: { extra: { eas: mocks.eas } } },
 }));
 vi.mock('expo-secure-store', () => ({
   getItemAsync: async (key: string) => mocks.values.get(key) ?? null,
@@ -41,12 +45,22 @@ const response = (gatewayId: string) => ({
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.values.clear();
+  mocks.eas.projectId = undefined;
   process.env.EXPO_PUBLIC_EAS_PROJECT_ID = 'eas-fixture';
   mocks.permission.mockResolvedValue({ status: 'granted' });
   mocks.token.mockResolvedValue({ data: 'ExpoPushToken[fixture]' });
   mocks.subscribe.mockResolvedValue({ gatewayId: 'gateway-fixture', enabled: true });
   mocks.listener.mockReturnValue({ remove: mocks.remove });
   mocks.last.mockResolvedValue(null);
+});
+it('registers with the saved app project when no build environment override is set', async () => {
+  delete process.env.EXPO_PUBLIC_EAS_PROJECT_ID;
+  mocks.eas.projectId = 'saved-eas-project';
+  await enableProjectNotifications(projectId);
+  expect(mocks.token).toHaveBeenCalledWith({ projectId: 'saved-eas-project' });
+  process.env.EXPO_PUBLIC_EAS_PROJECT_ID = 'override-eas-project';
+  await enableProjectNotifications(projectId);
+  expect(mocks.token).toHaveBeenLastCalledWith({ projectId: 'override-eas-project' });
 });
 it('registers only after OS permission and binds taps to the gateway that accepted this device', async () => {
   await enableProjectNotifications(projectId);
